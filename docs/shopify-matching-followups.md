@@ -28,8 +28,8 @@ Env vars:
 
 Template:
 
-- Copy `docs/env.local.template` to `.env.local` and fill values:
-  - `cp docs/env.local.template .env.local`
+- Copy `env.example` to `.env.local` and fill values:
+  - `cp env.example .env.local`
 
 Query bias operators (MVP):
 
