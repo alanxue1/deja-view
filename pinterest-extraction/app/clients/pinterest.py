@@ -130,11 +130,16 @@ class PinterestClient:
             
             # Handle error status codes
             if response.status_code == 401:
-                raise PinterestAuthError("Invalid or expired Pinterest access token")
+                raise PinterestAuthError(
+                    "Pinterest returned 401 Unauthorized. "
+                    "This usually means the token is invalid/expired OR the token is for a different environment. "
+                    f"Response: {response.text}"
+                )
             elif response.status_code == 403:
                 raise PinterestAuthError(
                     "Insufficient permissions to access this board. "
-                    "Ensure token has boards:read and pins:read scopes."
+                    "Ensure token has boards:read and pins:read scopes. "
+                    f"Response: {response.text}"
                 )
             elif response.status_code == 404:
                 raise PinterestAPIError(f"Board {board_id} not found")

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     openai_temperature: float = 0.7
     openai_reasoning_effort: str = "low"
     openai_verbosity: str = "low"
-    openai_max_output_tokens: int = 800
+    openai_max_output_tokens: int = 4000
     
     # Service defaults
     max_pins_default: int = 50

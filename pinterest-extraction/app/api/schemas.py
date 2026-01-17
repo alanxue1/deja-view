@@ -4,10 +4,32 @@ from pydantic import BaseModel, Field
 
 
 class AnalyzeRequest(BaseModel):
-    """Request body for analyzing pins."""
+    """Request body for analyzing pins (API mode)."""
     max_pins: int = Field(default=50, ge=1, le=200, description="Maximum number of pins to analyze")
     page_size: int = Field(default=50, ge=1, le=100, description="Pinterest API page size")
     include_pinterest_raw: bool = Field(default=False, description="Include raw Pinterest response")
+    llm_model: Optional[str] = Field(default=None, description="Override default LLM model")
+    llm_temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Override LLM temperature")
+    llm_reasoning_effort: Optional[str] = Field(
+        default=None,
+        description="Override LLM reasoning effort (minimal|low|medium|high)"
+    )
+    llm_verbosity: Optional[str] = Field(
+        default=None,
+        description="Override LLM verbosity (low|medium|high)"
+    )
+    llm_max_output_tokens: Optional[int] = Field(
+        default=None,
+        ge=64,
+        le=4000,
+        description="Override LLM max output tokens"
+    )
+
+
+class ScrapeAnalyzeRequest(BaseModel):
+    """Request body for scrape-based analysis (no API token needed)."""
+    board_url: str = Field(..., description="Full Pinterest board URL (e.g., https://pinterest.com/user/board)")
+    max_pins: int = Field(default=50, ge=1, le=100, description="Maximum number of pins to analyze")
     llm_model: Optional[str] = Field(default=None, description="Override default LLM model")
     llm_temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Override LLM temperature")
     llm_reasoning_effort: Optional[str] = Field(
