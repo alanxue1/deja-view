@@ -130,11 +130,6 @@ Respond ONLY with the JSON object, no markdown, no explanation."""
     
     def _parse_analysis(self, data: dict) -> PinAnalysis:
         """Parse and validate the JSON response into a PinAnalysis object."""
-        # Extract description (required)
-        description = data.get("description")
-        if not description or not isinstance(description, str):
-            raise ValueError("Missing or invalid 'description' field")
-        
         # Extract room_type (optional)
         room_type = data.get("room_type")
         
@@ -145,14 +140,18 @@ Respond ONLY with the JSON object, no markdown, no explanation."""
         for item_data in items_data:
             try:
                 category = item_data.get("category")
+                identifier = item_data.get("identifier")
+                description = item_data.get("description")
                 confidence = item_data.get("confidence")
                 
-                if not category or confidence is None:
+                if not category or not identifier or not description or confidence is None:
                     logger.warning(f"Skipping item with missing required fields: {item_data}")
                     continue
                 
                 item = FurnitureItem(
                     category=category,
+                    identifier=identifier,
+                    description=description,
                     style=item_data.get("style"),
                     materials=item_data.get("materials", []),
                     colors=item_data.get("colors", []),
@@ -166,7 +165,6 @@ Respond ONLY with the JSON object, no markdown, no explanation."""
                 continue
         
         return PinAnalysis(
-            description=description,
             room_type=room_type,
             items=items
         )

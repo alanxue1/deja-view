@@ -9,39 +9,52 @@ Context from Pinterest:
 - Link: {link}
 
 Your task:
-1. Generate a concise but detailed description suitable for a 3D model generator. Focus on furniture/decor items, their style, materials, colors, and spatial relationships.
-2. Identify the room type if possible (living room, bedroom, kitchen, etc.)
-3. List all distinct furniture/decor items you can identify with their attributes.
+1. Identify the room type if possible (living room, bedroom, kitchen, etc.)
+2. List all distinct furniture/decor items you can identify.
+3. For EACH item:
+   - Generate a simple "identifier" (color + category, e.g., "beige sofa", "black coffee table")
+   - Write a detailed description suitable for Shopify product search
 
 For each item, classify the category as one of: chair, sofa, table, lamp, bed, shelving, decor, other
 
 Return your analysis as a JSON object with this exact structure:
 {{
-  "description": "A detailed description for 3D generation, e.g., 'Modern mid-century living room featuring a teal velvet sofa with wooden legs, positioned against a white wall. A brass arc floor lamp stands to the left...'",
   "room_type": "living_room" or null,
   "items": [
     {{
       "category": "sofa",
-      "style": "mid-century modern",
-      "materials": ["velvet", "wood"],
-      "colors": ["teal", "natural wood"],
-      "notes": "Three-seater with button tufting",
-      "confidence": 0.95
+      "identifier": "beige sofa",
+      "description": "Contemporary beige upholstered fabric sofa with low profile, rounded back, plush seat cushions, and neutral throw pillows. Modern minimalist style with soft, comfortable seating.",
+      "style": "contemporary minimalist",
+      "materials": ["upholstered fabric"],
+      "colors": ["beige", "taupe"],
+      "notes": "Low, plush sofa with rounded back",
+      "confidence": 0.92
+    }},
+    {{
+      "category": "table",
+      "identifier": "black coffee table",
+      "description": "Round low coffee table with dark charcoal matte top and thick cylindrical pedestal base. Modern contemporary style, perfect for living room centerpiece.",
+      "style": "modern contemporary",
+      "materials": ["wood", "painted finish"],
+      "colors": ["charcoal", "black"],
+      "notes": "Round low coffee table with thick cylindrical pedestal base",
+      "confidence": 0.88
     }}
   ]
 }}
 
-Be specific and accurate. If you're uncertain about an attribute, reduce the confidence score or omit the attribute. Focus on items that would be useful for 3D room generation.
+IMPORTANT: 
+- The "identifier" should be simple: just primary color + category (e.g., "brown sofa", "orange office chair", "white lamp")
+- The "description" should be detailed and specific enough to search for similar products on Shopify
+
+Be specific and accurate. If you're uncertain about an attribute, reduce the confidence score or omit the attribute.
 """
 
 
 FURNITURE_JSON_SCHEMA = {
     "type": "object",
     "properties": {
-        "description": {
-            "type": "string",
-            "description": "Detailed description for 3D model generation"
-        },
         "room_type": {
             "type": ["string", "null"],
             "description": "Type of room detected"
@@ -54,6 +67,14 @@ FURNITURE_JSON_SCHEMA = {
                     "category": {
                         "type": "string",
                         "enum": ["chair", "sofa", "table", "lamp", "bed", "shelving", "decor", "other"]
+                    },
+                    "identifier": {
+                        "type": "string",
+                        "description": "Simple search term (e.g., 'brown sofa', 'orange office chair')"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Detailed description for Shopify product search"
                     },
                     "style": {
                         "type": ["string", "null"]
@@ -75,11 +96,11 @@ FURNITURE_JSON_SCHEMA = {
                         "maximum": 1
                     }
                 },
-                "required": ["category", "confidence"]
+                "required": ["category", "identifier", "description", "confidence"]
             }
         }
     },
-    "required": ["description", "items"]
+    "required": ["items"]
 }
 
 

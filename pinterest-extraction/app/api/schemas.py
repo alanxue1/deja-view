@@ -23,6 +23,8 @@ class AnalyzeRequest(BaseModel):
 class FurnitureItem(BaseModel):
     """A detected furniture item in the pin."""
     category: str = Field(..., description="chair/sofa/table/lamp/bed/shelving/decor/other")
+    identifier: str = Field(..., description="Simple search term for Shopify (e.g., 'brown sofa', 'orange office chair')")
+    description: str = Field(..., description="Detailed description for Shopify product search")
     style: Optional[str] = Field(None, description="Style description")
     materials: List[str] = Field(default_factory=list, description="Detected materials")
     colors: List[str] = Field(default_factory=list, description="Detected colors")
@@ -32,7 +34,6 @@ class FurnitureItem(BaseModel):
 
 class PinAnalysis(BaseModel):
     """LLM-generated analysis of a pin."""
-    description: str = Field(..., description="LLM-generated description for 3D model generation")
     room_type: Optional[str] = Field(None, description="Detected room type")
     items: List[FurnitureItem] = Field(default_factory=list, description="Detected furniture items")
 
