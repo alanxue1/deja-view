@@ -3,7 +3,7 @@
 import React from "react";
 import { SignInButton } from "@clerk/nextjs";
 import Container from "@/components/ui/Container";
-import NavBar from "@/components/layout/NavBar";
+import OverlayHeader from "@/components/overlay/OverlayHeader";
 import FooterHints from "@/components/layout/FooterHints";
 import Button from "@/components/ui/Button";
 import RoomPreview from "@/components/three/RoomPreview";
@@ -12,7 +12,7 @@ import { MotionDiv, fadeInUp, defaultTransition } from "@/lib/motion";
 export default function Home() {
   return (
     <main className="h-screen bg-[var(--bg)] flex flex-col overflow-hidden">
-      <NavBar />
+      <OverlayHeader overlay={false} />
       <div className="flex-1 flex flex-col min-h-0">
         <Container className="flex-1 flex flex-col py-6">
           {/* Hero Section - Setup instructions for new users */}
