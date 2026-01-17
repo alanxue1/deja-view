@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import { SignInButton } from "@clerk/nextjs";
 import Container from "@/components/ui/Container";
 import OverlayHeader from "@/components/overlay/OverlayHeader";
 import FooterHints from "@/components/layout/FooterHints";
@@ -44,11 +43,9 @@ export default function Home() {
               
               {/* CTA - Clerk Sign In */}
               <div>
-                <SignInButton mode="redirect" forceRedirectUrl="/loading">
-                  <Button variant="soft" className="text-base font-normal">
-                    Get started
-                  </Button>
-                </SignInButton>
+                <Button asChild href="/sign-in" variant="soft" className="text-base font-normal">
+                  Get started
+                </Button>
               </div>
             </MotionDiv>
 

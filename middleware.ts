@@ -3,7 +3,11 @@ import { NextResponse } from "next/server";
 
 const isProtectedRoute = createRouteMatcher(["/loading", "/room"]);
 
-export default clerkMiddleware(async (auth, request) => {
+const hasClerk =
+  !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
+
+export default hasClerk
+  ? clerkMiddleware(async (auth, request) => {
   const { userId } = await auth();
 
   const isAuthenticated = !!userId;
@@ -20,4 +24,5 @@ export default clerkMiddleware(async (auth, request) => {
   }
 
   return NextResponse.next();
-});
+})
+  : () => NextResponse.next();

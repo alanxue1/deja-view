@@ -3,7 +3,7 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { User } from "lucide-react";
-import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/nextjs";
+import { SignedIn, SignedOut, UserButton, useUser } from "@clerk/nextjs";
 import Button from "@/components/ui/Button";
 
 interface OverlayHeaderProps {
@@ -114,14 +114,9 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true }) 
               <UserButton afterSignOutUrl="/" />
             </SignedIn>
             <SignedOut>
-              <SignInButton mode="redirect" forceRedirectUrl="/loading">
-                <Button
-                  variant="ghost"
-                  className="text-[16px] font-normal font-sohne"
-                >
-                  Login
-                </Button>
-              </SignInButton>
+              <Button asChild href="/sign-in" variant="ghost" className="text-[16px] font-normal font-sohne">
+                Login
+              </Button>
             </SignedOut>
           </div>
         </div>
