@@ -42,3 +42,36 @@
     font-family: var(--font-sohne);
   }
 }
+
+/* Scroll Indicator Mouse Animation */
+.mouse {
+  width: 24px;
+  height: 40px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  position: relative;
+}
+
+.mouse::before {
+  content: "";
+  width: 4px;
+  height: 8px;
+  background: var(--ink);
+  border-radius: 2px;
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  animation: scroll 1.5s infinite;
+}
+
+@keyframes scroll {
+  0% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(12px);
+  }
+}

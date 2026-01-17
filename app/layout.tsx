@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ClerkProvider } from "@clerk/nextjs";
 import { Playfair_Display, Inter } from "next/font/google";
 import "./globals.css";
 import CustomCursor from "@/components/effects/CustomCursor";
@@ -27,13 +28,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${playfairDisplay.variable} ${inter.variable}`}>
-      <body>
-        <SmoothScroll>
-          <CustomCursor />
-          {children}
-        </SmoothScroll>
-      </body>
-    </html>
+    <ClerkProvider>
+      <html lang="en" className={`${playfairDisplay.variable} ${inter.variable}`}>
+        <body>
+          <SmoothScroll>
+            <CustomCursor />
+            {children}
+          </SmoothScroll>
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }

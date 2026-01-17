@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { cn } from "@/lib/cn";
+import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
 import Button from "@/components/ui/Button";
 
 export const NavBar: React.FC = () => {
@@ -28,16 +28,21 @@ export const NavBar: React.FC = () => {
             </h1>
           </div>
 
-          {/* Right: Login */}
+          {/* Right: Auth - UserButton when signed in, SignIn when signed out */}
           <div className="flex items-center justify-end">
-            <Button 
-              variant="ghost" 
-              asChild 
-              href="/login" 
-              className="text-[16px] font-normal font-sohne"
-            >
-              Login
-            </Button>
+            <SignedIn>
+              <UserButton afterSignOutUrl="/" />
+            </SignedIn>
+            <SignedOut>
+              <SignInButton mode="redirect" forceRedirectUrl="/loading">
+                <Button
+                  variant="ghost"
+                  className="text-[16px] font-normal font-sohne"
+                >
+                  Login
+                </Button>
+              </SignInButton>
+            </SignedOut>
           </div>
         </div>
       </div>
