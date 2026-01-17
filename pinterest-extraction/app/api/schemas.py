@@ -68,3 +68,22 @@ class AnalyzeResponse(BaseModel):
     num_pins_analyzed: int
     num_pins_skipped: int
     pins: List[AnalyzedPin]
+
+
+class ExtractItemImageRequest(BaseModel):
+    """Request body for extracting an item from a Pinterest image."""
+    image_url: str = Field(..., description="Direct Pinterest image URL (e.g., https://i.pinimg.com/...)")
+    item_description: str = Field(..., description="Description of the item to extract (e.g., 'red handbag', 'wooden chair')")
+    model_image: Optional[str] = Field(default=None, description="Override Gemini image model (e.g., gemini-2.5-flash-image)")
+    max_output_pixels: Optional[int] = Field(default=None, ge=256, le=4096, description="Max output image dimension")
+
+
+class ExtractItemImageResponse(BaseModel):
+    """Response from the extract-item-image endpoint."""
+    source_image_url: str = Field(..., description="Original Pinterest image URL")
+    item_description: str = Field(..., description="Item description that was extracted")
+    result_image_url: str = Field(..., description="Public R2 URL to the extracted item image")
+    r2_object_key: str = Field(..., description="R2 object key for reference")
+    mime_type: Optional[str] = Field(default="image/png", description="MIME type of generated image")
+    width: Optional[int] = Field(None, description="Width of generated image in pixels")
+    height: Optional[int] = Field(None, description="Height of generated image in pixels")

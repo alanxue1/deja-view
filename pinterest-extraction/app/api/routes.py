@@ -1,9 +1,15 @@
 import logging
 from fastapi import APIRouter, HTTPException
 
-from app.api.schemas import AnalyzeRequest, AnalyzeResponse, AnalyzedPin
+from app.api.schemas import (
+    AnalyzeRequest, AnalyzeResponse, AnalyzedPin,
+    ExtractItemImageRequest, ExtractItemImageResponse
+)
 from app.clients.scraper import PinterestScraper
 from app.clients.llm.registry import get_llm_provider
+from app.clients.gemini.client import GeminiClient
+from app.clients.storage.r2 import R2Client
+from app.utils.http import create_http_client
 
 
 logger = logging.getLogger(__name__)
@@ -113,4 +119,110 @@ async def analyze_board(request: AnalyzeRequest):
         num_pins_analyzed=num_analyzed,
         num_pins_skipped=num_skipped,
         pins=analyzed_pins
+    )
+
+
+@router.post("/extract-item-image", response_model=ExtractItemImageResponse)
+async def extract_item_image(request: ExtractItemImageRequest):
+    """
+    Extract a single item from a Pinterest image and generate a transparent PNG.
+    
+    Takes a direct Pinterest image URL and item description, uses Gemini Nano Banana
+    to generate an isolated image of just that item on transparent background,
+    uploads to Cloudflare R2, and returns a public URL.
+    
+    Designed for feeding into 3D model generators.
+    """
+    logger.info(
+        f"Starting item extraction: image_url={request.image_url}, "
+        f"item='{request.item_description}'"
+    )
+    
+    # Validate that it's a direct image URL
+    if not request.image_url.startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=400,
+            detail="image_url must be a valid HTTP(S) URL"
+        )
+    
+    # Download image bytes from Pinterest (in-memory)
+    logger.info(f"Downloading image from {request.image_url}")
+    try:
+        async with create_http_client() as http_client:
+            response = await http_client.get(request.image_url)
+            response.raise_for_status()
+            image_bytes = response.content
+            
+        logger.info(f"Downloaded {len(image_bytes)} bytes")
+        
+    except Exception as e:
+        logger.error(f"Failed to download image: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to download Pinterest image: {e}"
+        )
+    
+    # Initialize Gemini client
+    try:
+        gemini_client = GeminiClient()
+    except ValueError as e:
+        logger.error(f"Failed to initialize Gemini client: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Gemini client initialization failed: {e}"
+        )
+    
+    # Generate isolated item image with transparent background
+    logger.info("Calling Gemini to extract item")
+    try:
+        extracted_image_bytes = await gemini_client.extract_item_transparent(
+            image_bytes=image_bytes,
+            item_description=request.item_description,
+            model_override=request.model_image,
+            max_output_pixels=request.max_output_pixels
+        )
+        
+        logger.info(f"Gemini returned {len(extracted_image_bytes)} bytes")
+        
+    except Exception as e:
+        logger.error(f"Gemini extraction failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate extracted image: {e}"
+        )
+    
+    # Initialize R2 client and upload
+    try:
+        r2_client = R2Client()
+    except ValueError as e:
+        logger.error(f"Failed to initialize R2 client: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"R2 client initialization failed: {e}"
+        )
+    
+    logger.info("Uploading extracted image to R2")
+    try:
+        object_key, public_url = r2_client.upload_image(
+            image_bytes=extracted_image_bytes,
+            content_type="image/png",
+            key_prefix="items"
+        )
+        
+        logger.info(f"Upload successful: {public_url}")
+        
+    except Exception as e:
+        logger.error(f"R2 upload failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload to R2: {e}"
+        )
+    
+    # Return response with public URL
+    return ExtractItemImageResponse(
+        source_image_url=request.image_url,
+        item_description=request.item_description,
+        result_image_url=public_url,
+        r2_object_key=object_key,
+        mime_type="image/png"
     )
