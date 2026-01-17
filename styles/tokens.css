@@ -1,0 +1,19 @@
+:root {
+  /* Colors */
+  --bg: #fafcfd;
+  --ink: #32404f;
+  --muted: #8b949e;
+  --accent: #ff7c12;
+  --sage: #c3d4ce;
+  --border: #e7e7e7;
+
+  /* Border Radius */
+  --radius-card: 16px;
+  --radius-pill: 999px;
+
+  /* Shadows */
+  --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.04);
+
+  /* Fonts */
+  --font-sohne: 'Sohne Buch', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}

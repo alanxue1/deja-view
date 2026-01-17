@@ -1,0 +1,44 @@
+@import "./tokens.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Sohne Buch Font */
+@font-face {
+  font-family: 'Sohne Buch';
+  src: url('/fonts/Sohne-Buch.woff2') format('woff2'),
+       url('/fonts/Sohne-Buch.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-[var(--bg)] text-[var(--ink)] antialiased;
+    font-family: var(--font-sans);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-serif);
+  }
+}
+
+@layer utilities {
+  .font-serif {
+    font-family: var(--font-serif);
+  }
+  
+  .font-sohne {
+    font-family: var(--font-sohne);
+  }
+}
