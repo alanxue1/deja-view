@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
+import { SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
 import Button from "@/components/ui/Button";
 
 export const NavBar: React.FC = () => {
@@ -34,14 +34,9 @@ export const NavBar: React.FC = () => {
               <UserButton afterSignOutUrl="/" />
             </SignedIn>
             <SignedOut>
-              <SignInButton mode="redirect" forceRedirectUrl="/loading">
-                <Button
-                  variant="ghost"
-                  className="text-[16px] font-normal font-sohne"
-                >
-                  Login
-                </Button>
-              </SignInButton>
+              <Button asChild href="/sign-in" variant="ghost" className="text-[16px] font-normal font-sohne">
+                Login
+              </Button>
             </SignedOut>
           </div>
         </div>

@@ -27,16 +27,23 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const hasClerk =
+    !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
+
   return (
-    <ClerkProvider>
-      <html lang="en" className={`${playfairDisplay.variable} ${inter.variable}`}>
-        <body>
-          <SmoothScroll>
-            <CustomCursor />
-            {children}
-          </SmoothScroll>
-        </body>
-      </html>
-    </ClerkProvider>
+    <html lang="en" className={`${playfairDisplay.variable} ${inter.variable}`}>
+      <body>
+        <SmoothScroll>
+          <CustomCursor />
+          {hasClerk ? (
+            <ClerkProvider signInUrl="/sign-in" signUpUrl="/sign-up">
+              {children}
+            </ClerkProvider>
+          ) : (
+            children
+          )}
+        </SmoothScroll>
+      </body>
+    </html>
   );
 }
