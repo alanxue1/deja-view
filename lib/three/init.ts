@@ -8,7 +8,7 @@ export interface ThreeScene {
 
 export function initThree(container: HTMLDivElement): ThreeScene {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xfafcfd);
+  scene.background = new THREE.Color(0x1a1a1a); // Dark background
 
   const camera = new THREE.PerspectiveCamera(
     50,
