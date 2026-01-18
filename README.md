@@ -17,12 +17,20 @@ A production-quality hackathon project for experiencing rooms in 3D before you v
 npm install
 ```
 
-2. Run the development server:
+2. Set up Clerk authentication. Create `.env.local` in the project root with:
+```
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_your_key_here
+CLERK_SECRET_KEY=sk_test_your_key_here
+```
+Get your keys from [Clerk Dashboard](https://dashboard.clerk.com) → API Keys.  
+Optional: set `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/loading` and `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/loading` to send users to the loading page after sign-in.
+
+3. Run the development server:
 ```bash
 npm run dev
 ```
 
-3. Open [http://localhost:3000](http://localhost:3000) in your browser.
+4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Project Structure
 

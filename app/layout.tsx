@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ClerkProvider } from "@clerk/nextjs";
 import { Playfair_Display, Inter } from "next/font/google";
 import "./globals.css";
 import CustomCursor from "@/components/effects/CustomCursor";
@@ -26,12 +27,21 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const hasClerk =
+    !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
+
   return (
     <html lang="en" className={`${playfairDisplay.variable} ${inter.variable}`}>
       <body>
         <SmoothScroll>
           <CustomCursor />
-          {children}
+          {hasClerk ? (
+            <ClerkProvider signInUrl="/sign-in" signUpUrl="/sign-up">
+              {children}
+            </ClerkProvider>
+          ) : (
+            children
+          )}
         </SmoothScroll>
       </body>
     </html>
