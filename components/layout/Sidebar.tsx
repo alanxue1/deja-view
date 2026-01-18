@@ -14,7 +14,7 @@ interface SidebarProps {
 
 // Model path mapping for spaces and products
 const MODEL_PATHS: Record<string, string> = {
-  "David's Bedroom": "/Perfect-empty-room - manual lidar.glb",
+  "David's Bedroom": "/davidsbedroom.glb",
   "Uoft Student Dorm": "/uoft-student-dorm.glb",
   "Orange Chair": "/uoft-dorm-common-area.glb", // Placeholder - replace with actual model path
   "Purple table": "/uoft-dorm-common-area.glb", // Placeholder - replace with actual model path
@@ -34,10 +34,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onRoomSelect 
   const handleRoomClick = (roomName: string) => {
     const modelPath = MODEL_PATHS[roomName];
     if (modelPath && onRoomSelect) {
+      // We're on /room page - switch room directly
       onRoomSelect(modelPath);
       onClose();
+    } else if (modelPath) {
+      // Navigate to /room with the model path as query param
+      router.push(`/room?model=${encodeURIComponent(modelPath)}`);
+      onClose();
     } else {
-      // Fallback to upload if no callback
+      // Fallback to upload if no model path
       router.push("/upload");
       onClose();
     }

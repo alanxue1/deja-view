@@ -1,9 +1,11 @@
 import logging
 import asyncio
+from typing import List
 from fastapi import APIRouter, HTTPException
 
 from app.api.schemas import (
     AnalyzeRequest, AnalyzeResponse, AnalyzedPin,
+    AnalyzeJobStartResponse, AnalyzeJobStatusResponse, AnalyzeJobProgress,
     ExtractItemImageRequest, ExtractItemImageResponse,
     ExtractItem3DRequest, ExtractItem3DJobStartResponse,
     ExtractItem3DJobStatusResponse, ExtractItem3DResult
@@ -20,6 +22,8 @@ from app.jobs.store import get_job_store, STATUS_QUEUED, STATUS_RUNNING, STATUS_
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1")
+
+ANALYZE_CONCURRENCY = 4  # Bounded parallelism for pin analysis
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -125,6 +129,85 @@ async def analyze_board(request: AnalyzeRequest):
         num_pins_skipped=num_skipped,
         pins=analyzed_pins
     )
+
+
+@router.post("/analyze-job", response_model=AnalyzeJobStartResponse)
+async def start_analyze_job(request: AnalyzeRequest):
+    """
+    Start an async job to analyze pins from a board without hitting request timeouts.
+    
+    Returns immediately with job_id. Poll /analyze-job/{job_id} for status and progress.
+    """
+    logger.info(f"Creating analyze job for board: {request.board_url}, max_pins={request.max_pins}")
+    
+    # Validate LLM provider up front so we fail fast if misconfigured
+    try:
+        _ = get_llm_provider()
+    except ValueError as e:
+        logger.error(f"Failed to initialize LLM provider: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM provider error: {e}")
+    
+    # Create job
+    job_store = get_job_store()
+    job_id = await job_store.create_job({
+        "board_url": request.board_url,
+        "max_pins": request.max_pins,
+        "llm_model": request.llm_model,
+        "llm_reasoning_effort": request.llm_reasoning_effort,
+        "llm_max_output_tokens": request.llm_max_output_tokens,
+    })
+    
+    # Kick off background processing
+    asyncio.create_task(_process_analyze_job(job_id, request))
+    
+    logger.info(f"Analyze job created: {job_id}")
+    return AnalyzeJobStartResponse(job_id=job_id)
+
+
+@router.get("/analyze-job/{job_id}", response_model=AnalyzeJobStatusResponse)
+async def get_analyze_job_status(job_id: str):
+    """
+    Get status/progress of an analyze job.
+    """
+    job_store = get_job_store()
+    job = await job_store.get_job(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    progress = None
+    result_model = None
+    
+    if job.result:
+        # Extract progress if present
+        progress_data = job.result.get("progress")
+        if progress_data:
+            progress = AnalyzeJobProgress(**progress_data)
+        
+        # Parse analyze result if available
+        if all(key in job.result for key in ("board_id", "num_pins_fetched", "num_pins_analyzed", "num_pins_skipped", "pins")):
+            try:
+                result_model = AnalyzeResponse(
+                    board_id=job.result["board_id"],
+                    num_pins_fetched=job.result["num_pins_fetched"],
+                    num_pins_analyzed=job.result["num_pins_analyzed"],
+                    num_pins_skipped=job.result["num_pins_skipped"],
+                    pins=[AnalyzedPin(**pin) if not isinstance(pin, AnalyzedPin) else pin for pin in job.result["pins"]],
+                )
+            except Exception as e:
+                logger.error(f"Failed to parse analyze job result for {job_id}: {e}")
+    
+    response_data = {
+        "job_id": job.job_id,
+        "status": job.status,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "error": job.error,
+        "progress": progress,
+        "result": result_model
+    }
+    
+    return AnalyzeJobStatusResponse(**response_data)
 
 
 @router.post("/extract-item-image", response_model=ExtractItemImageResponse)
@@ -409,3 +492,150 @@ async def _process_3d_job(job_id: str, request: ExtractItem3DRequest):
         # Release processing slot
         job_store.release_slot()
         logger.info(f"Job {job_id}: released processing slot")
+
+
+async def _process_analyze_job(job_id: str, request: AnalyzeRequest):
+    """
+    Background task to analyze a board's pins with bounded parallelism.
+    """
+    job_store = get_job_store()
+    
+    try:
+        await job_store.acquire_slot()
+        await job_store.update_job_status(job_id, STATUS_RUNNING)
+        logger.info(f"Analyze job {job_id}: starting")
+        
+        # Initialize dependencies
+        try:
+            llm_provider = get_llm_provider()
+        except Exception as e:
+            logger.error(f"Analyze job {job_id}: LLM init failed: {e}")
+            raise
+        
+        # Scrape pins
+        scraped_pins = []
+        try:
+            async with PinterestScraper() as scraper:
+                scraped_pins = await scraper.scrape_board(
+                    board_url=request.board_url,
+                    max_pins=request.max_pins
+                )
+        except Exception as e:
+            logger.error(f"Analyze job {job_id}: scraping failed: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to scrape board. Make sure it's a valid public Pinterest board URL. Error: {e}"
+            )
+        
+        if not scraped_pins:
+            empty_result = {
+                "board_id": request.board_url,
+                "num_pins_fetched": 0,
+                "num_pins_analyzed": 0,
+                "num_pins_skipped": 0,
+                "pins": [],
+                "progress": {"pins_completed": 0, "pins_total": 0}
+            }
+            await job_store.update_job_status(job_id, STATUS_SUCCEEDED, result=empty_result)
+            logger.info(f"Analyze job {job_id}: no pins found, completed")
+            return
+        
+        semaphore = asyncio.Semaphore(ANALYZE_CONCURRENCY)
+        analyzed_pins: List[AnalyzedPin] = []
+        num_analyzed = 0
+        num_skipped = 0
+        
+        async def analyze_single(pin):
+            nonlocal num_analyzed, num_skipped
+            async with semaphore:
+                try:
+                    analysis = await llm_provider.analyze_pin(
+                        image_url=pin.image_url,
+                        title=pin.title,
+                        description=pin.description,
+                        alt_text=None,
+                        link=None,
+                        model_override=request.llm_model,
+                        temperature_override=None,
+                        reasoning_effort_override=request.llm_reasoning_effort,
+                        verbosity_override=None,
+                        max_output_tokens_override=request.llm_max_output_tokens
+                    )
+                    
+                    analyzed_pins.append(AnalyzedPin(
+                        pin_id=pin.pin_id,
+                        board_id=request.board_url,
+                        image_url=pin.image_url,
+                        pinterest_description=pin.description,
+                        title=pin.title,
+                        analysis=analysis,
+                        skipped=False
+                    ))
+                    num_analyzed += 1
+                except Exception as e:
+                    logger.error(f"Analyze job {job_id}: failed to analyze pin {pin.pin_id}: {e}")
+                    analyzed_pins.append(AnalyzedPin(
+                        pin_id=pin.pin_id,
+                        board_id=request.board_url,
+                        image_url=pin.image_url,
+                        pinterest_description=pin.description,
+                        title=pin.title,
+                        skipped=True,
+                        skip_reason=f"LLM analysis failed: {str(e)}"
+                    ))
+                    num_skipped += 1
+                finally:
+                    # Emit progress update
+                    progress = {
+                        "pins_completed": num_analyzed + num_skipped,
+                        "pins_total": len(scraped_pins)
+                    }
+                    partial_result = {
+                        "board_id": request.board_url,
+                        "num_pins_fetched": len(scraped_pins),
+                        "num_pins_analyzed": num_analyzed,
+                        "num_pins_skipped": num_skipped,
+                        "pins": [pin.dict() for pin in analyzed_pins],
+                        "progress": progress
+                    }
+                    await job_store.update_job_status(
+                        job_id,
+                        STATUS_RUNNING,
+                        result=partial_result
+                    )
+        
+        await asyncio.gather(*(analyze_single(pin) for pin in scraped_pins))
+        
+        final_progress = {
+            "pins_completed": num_analyzed + num_skipped,
+            "pins_total": len(scraped_pins)
+        }
+        final_result = {
+            "board_id": request.board_url,
+            "num_pins_fetched": len(scraped_pins),
+            "num_pins_analyzed": num_analyzed,
+            "num_pins_skipped": num_skipped,
+            "pins": [pin.dict() for pin in analyzed_pins],
+            "progress": final_progress
+        }
+        
+        await job_store.update_job_status(job_id, STATUS_SUCCEEDED, result=final_result)
+        logger.info(f"Analyze job {job_id}: completed successfully")
+    
+    except HTTPException as http_exc:
+        await job_store.update_job_status(
+            job_id,
+            STATUS_FAILED,
+            error=str(http_exc.detail)
+        )
+        logger.error(f"Analyze job {job_id}: failed with HTTP error {http_exc.detail}")
+    except Exception as e:
+        await job_store.update_job_status(
+            job_id,
+            STATUS_FAILED,
+            error=str(e)
+        )
+        logger.error(f"Analyze job {job_id}: failed with error: {e}")
+    finally:
+        job_store.release_slot()
+        logger.info(f"Analyze job {job_id}: released processing slot")

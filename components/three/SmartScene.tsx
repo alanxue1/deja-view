@@ -40,7 +40,7 @@ function isTableLikeModelPath(modelPath: string): boolean {
 
 export const SmartScene: React.FC<SmartSceneProps> = ({
   className,
-  roomModelPath = "/Perfect-empty-room - manual lidar.glb",
+  roomModelPath = "/davidsbedroom.glb",
   onAddItem,
   onReady,
 }) => {
@@ -620,7 +620,14 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         floorMesh.rotation.x = Math.PI / 2; // Rotate to be horizontal
         // Set starting floor Y based on room
         const isUoftDorm = roomModelPath.includes("uoft-student-dorm");
-        floorMesh.position.y = isUoftDorm ? -0.48130348880026463 : -1.0536222685081933;
+        const isDavidsBedroom = roomModelPath.includes("davidsbedroom");
+        let startingFloorY = -1.0536222685081933; // Default
+        if (isUoftDorm) {
+          startingFloorY = -0.48130348880026463;
+        } else if (isDavidsBedroom) {
+          startingFloorY = -1.0536222685081933;
+        }
+        floorMesh.position.y = startingFloorY;
         floorMesh.position.x = 0;
         floorMesh.position.z = 0;
         floorMesh.name = "calibration-floor";

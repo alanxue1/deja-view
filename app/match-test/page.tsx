@@ -6,7 +6,6 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Container from "@/components/ui/Container";
 import Text from "@/components/ui/Text";
-import NavBar from "@/components/layout/NavBar";
 import type { MatchResponse } from "@/lib/match/types";
 
 type UiState =
@@ -72,9 +71,7 @@ export default function MatchTestPage() {
   const warnings = state.kind === "success" ? state.data.warnings ?? [] : [];
 
   return (
-    <main className="min-h-screen bg-[var(--bg)] flex flex-col">
-      <NavBar />
-
+    <main className="min-h-screen bg-[var(--bg)] flex flex-col pt-20">
       <Container className="py-8 flex-1 flex flex-col gap-6">
         <div className="flex flex-col gap-2">
           <h1 className="text-2xl md:text-3xl font-serif text-[var(--ink)] font-normal">

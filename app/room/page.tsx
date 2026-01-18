@@ -1,11 +1,24 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import SmartScene from "@/components/three/SmartScene";
 import RoomOverlay from "@/components/overlay/RoomOverlay";
 
 export default function RoomPage() {
-  const [roomModelPath, setRoomModelPath] = useState("/Perfect-empty-room - manual lidar.glb");
+  const searchParams = useSearchParams();
+  const modelFromUrl = searchParams.get("model");
+  
+  const [roomModelPath, setRoomModelPath] = useState(
+    modelFromUrl || "/davidsbedroom.glb"
+  );
+
+  // Update room model when URL changes
+  useEffect(() => {
+    if (modelFromUrl) {
+      setRoomModelPath(modelFromUrl);
+    }
+  }, [modelFromUrl]);
 
   const handleRoomSelect = (modelPath: string) => {
     setRoomModelPath(modelPath);
@@ -19,7 +32,7 @@ export default function RoomPage() {
       </div>
 
       {/* Floating UI Overlay */}
-      <RoomOverlay onRoomSelect={handleRoomSelect} />
+      <RoomOverlay onRoomSelect={handleRoomSelect} currentRoomPath={roomModelPath} />
     </main>
   );
 }

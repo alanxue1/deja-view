@@ -2,7 +2,6 @@
 
 import React, { useRef, useState, useEffect } from "react";
 import { useUser } from "@clerk/nextjs";
-import OverlayHeader from "@/components/overlay/OverlayHeader";
 import Container from "@/components/ui/Container";
 
 const UploadIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -67,8 +66,7 @@ export default function UploadPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[var(--bg)] flex flex-col">
-      <OverlayHeader overlay={false} />
+    <main className="min-h-screen bg-[var(--bg)] flex flex-col pt-20">
       <Container className="flex-1 flex flex-col items-center justify-center py-16 px-6">
         <div className="w-full max-w-2xl flex flex-col items-center">
           {/* Main Title */}
