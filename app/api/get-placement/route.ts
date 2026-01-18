@@ -17,9 +17,10 @@ function optimizePlacement(placement: any, context: {
   const CENTER_THRESHOLD = 0.1; // avoid dead center bias
 
   // Clamp scale to safe range (scale is a multiplier; client applies it on top of its base fit scaling).
+  // Allow up to 5.0 for larger furniture like beds and chairs
   const clampedScale = (() => {
     const s = typeof scale === "number" && Number.isFinite(scale) ? scale : 1;
-    return Math.max(0.2, Math.min(4.0, s));
+    return Math.max(0.2, Math.min(5.0, s));
   })();
 
   const labelLower = (label || "").toLowerCase();
@@ -456,12 +457,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Prompt: unitless scene coordinates + strict JSON schema (adds `scale`, cardinal rotation)
-    const prompt = `You are an expert interior designer. Analyze the provided top-down room image and choose a placement for the item labeled '${label || 'Item'}'.\n${contextInfo}${modelContext}\n\nIMPORTANT ABOUT SCALE:\n- All numeric sizes are in a generic scene unit system (NOT cm/m). Treat the room dimensions as a relative magnitude.\n- Your output must be consistent with the provided room size and model bounds so the item does not clip through walls.\n- Vertical placement (height) is handled automatically by the app; you must NOT return any height/Y value.\n\nOUTPUT CONTRACT (STRICT):\n1) Return normalized coordinates x,y in [0,1].\n2) Return rotation snapped to one of these exact values ONLY: 0, Math.PI/2, Math.PI, -Math.PI/2.\n   - 0 faces +Z, Math.PI faces -Z, Math.PI/2 faces +X, -Math.PI/2 faces -X.\n3) Return scale as a positive multiplier (typical range 0.5 to 2.0). The app already sizes the model to a base fit; scale multiplies that base.\n\nPLACEMENT RULES:\n- Never place in prohibited zones: x < 0.05, x > 0.95, y < 0.05, y > 0.95.\n- Avoid overlaps with existing items.\n- For couches/sofas: place with the BACK near a wall and face inward. Avoid dead center (do not use x≈0.5 and y≈0.5).\n- For furniture (chairs/desks/tables/beds/etc): ensure the FRONT faces inward and NOT into the nearest wall.\n\nRETURN ONLY A SINGLE JSON OBJECT (no markdown, no extra text):\n{\n  \"x\": 0.25,\n  \"y\": 0.15,\n  \"rotation\": 0,\n  \"scale\": 1.2,\n  \"reasoning\": \"Back near the back wall, facing inward; scaled to match room proportions; avoids overlaps\"\n}\n`;
+    const prompt = `You are an expert interior designer. Analyze the provided top-down room image and choose a placement for the item labeled '${label || 'Item'}'.\n${contextInfo}${modelContext}\n\nIMPORTANT ABOUT SCALE:\n- All numeric sizes are in a generic scene unit system (NOT cm/m). Treat the room dimensions as a relative magnitude.\n- Your output must be consistent with the provided room size and model bounds so the item does not clip through walls.\n- Vertical placement (height) is handled automatically by the app; you must NOT return any height/Y value.\n\nSCALE GUIDELINES (CRITICAL - FOLLOW EXACTLY):\n- CHAIRS: Scale 2.0 to 3.0 (they need to be large enough to sit in)\n- BEDS: Scale 2.5 to 3.5 (beds are the largest furniture pieces)\n- SOFAS/COUCHES: Scale 2.5 to 3.5 (large seating furniture)\n- DESKS/TABLES: Scale 2.0 to 3.0 (functional work surfaces)\n- DRESSERS/CABINETS/SHELVES: Scale 1.8 to 2.5 (storage furniture)\n- ARMCHAIRS/BENCHES/STOOLS: Scale 1.8 to 2.5 (seating)\n\nNON-FURNITURE ITEMS MUST BE TINY (scale 0.2 to 0.3):\n- Plants: Scale 0.2 to 0.3 (small potted plants)\n- Lamps: Scale 0.2 to 0.3 (table/floor lamps)\n- Decorations: Scale 0.2 to 0.3 (vases, sculptures, frames)\n- Electronics: Scale 0.2 to 0.3 (speakers, devices)\n- Accessories: Scale 0.2 to 0.3 (books, boxes, small items)\n- ANY item that is NOT furniture: Scale 0.25 (default for small objects)\n\nNO OVERLAPPING (CRITICAL):\n- NEVER place items on top of or overlapping with existing items.\n- Check ALL existing item positions and ensure at least 0.15 normalized distance between items.\n- If an area is occupied, find an EMPTY area of the room instead.\n- Look at the room image carefully to identify occupied vs empty spaces.\n\nROTATION RULES (CRITICAL):\n- ALL furniture must face TOWARD THE CENTER of the room (coordinates 0.5, 0.5).\n- If item is in LEFT half (x < 0.5): rotate to face RIGHT (rotation = Math.PI/2)\n- If item is in RIGHT half (x > 0.5): rotate to face LEFT (rotation = -Math.PI/2)\n- If item is in BACK half (y < 0.5): rotate to face FRONT (rotation = 0)\n- If item is in FRONT half (y > 0.5): rotate to face BACK (rotation = Math.PI)\n- Choose the rotation that points the furniture's FRONT toward the room center.\n\nOUTPUT CONTRACT (STRICT):\n1) Return normalized coordinates x,y in [0,1].\n2) Return rotation snapped to one of these exact values ONLY: 0, Math.PI/2, Math.PI, -Math.PI/2.\n3) Return scale: Use 2.0-3.5 for FURNITURE only. Use 0.2-0.3 for ALL non-furniture items (plants, lamps, decorations, etc. must be SMALL).\n\nPLACEMENT RULES:\n- Never place in prohibited zones: x < 0.05, x > 0.95, y < 0.05, y > 0.95.\n- ABSOLUTELY NO OVERLAPPING with existing items - find empty space.\n- For couches/sofas: place with the BACK near a wall, FRONT facing room center.\n- For all furniture: ensure the FRONT faces toward room center (0.5, 0.5).\n\nRETURN ONLY A SINGLE JSON OBJECT (no markdown, no extra text):\n{\n  \"x\": 0.25,\n  \"y\": 0.15,\n  \"rotation\": 0,\n  \"scale\": 2.5,\n  \"reasoning\": \"Placed in empty area, facing room center; no overlaps with existing items\"\n}\n`;
 
-    // Call Google Gemini Vision API - using gemini 3 flash preview
-    const modelName = "gemini-3-flash-preview"; // Gemini 3 Flash Preview - latest fast preview model
+    // Call Google Gemini Vision API - using gemini 3.0 flash preview
+    const modelName = "gemini-3-flash-preview";
     const apiVersion = "v1beta";
-    console.log(`🤖 Using Gemini model: ${modelName} (API: ${apiVersion}) - Gemini 3 Flash Preview`);
+    console.log(`🤖 Using Gemini model: ${modelName} (API: ${apiVersion})`);
     
     const apiUrl = `https://generativelanguage.googleapis.com/${apiVersion}/models/${modelName}:generateContent?key=${apiKey}`;
     console.log(`📡 API URL: ${apiUrl.replace(apiKey, 'API_KEY_HIDDEN')}`);
@@ -553,7 +554,7 @@ export async function POST(request: NextRequest) {
       placement.y = Math.max(0, Math.min(1, placement.y || 0.5));
       placement.rotation = typeof placement.rotation === "number" ? placement.rotation : 0;
       placement.scale = typeof placement.scale === "number" && Number.isFinite(placement.scale) ? placement.scale : 1.0;
-      placement.scale = Math.max(0.2, Math.min(4.0, placement.scale));
+      placement.scale = Math.max(0.2, Math.min(5.0, placement.scale)); // Allow up to 5.0 for larger furniture
 
       // Post-processing validation: optimize placement with algorithm
       const optimized = optimizePlacement(placement, {

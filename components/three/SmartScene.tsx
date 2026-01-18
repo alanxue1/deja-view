@@ -69,6 +69,8 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<PlacedItem[]>([]);
   const [roomDimensions, setRoomDimensions] = useState<{ width: number; depth: number; floorY: number; scaledWidth?: number; scaledDepth?: number; scaleFactor?: number }>({ width: 4, depth: 4, floorY: -0.5315285924741149 }); // Floor Y from user measurement
+  const [showDeletePopup, setShowDeletePopup] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<number | null>(null);
   const floorMeshRef = useRef<THREE.Mesh | null>(null);
   const floorControlsRef = useRef<TransformControls | null>(null);
   const itemShadowRef = useRef<Map<number, THREE.Mesh>>(new Map());
@@ -1870,6 +1872,152 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     }
   }, [roomDimensions, items, onAddItem, captureTopDownImage, loadAndRenderItem]);
 
+  // Save an item to the saved-items collection
+  const saveItemToDb = useCallback(async (item: PlacedItem, glbUrl: string, label: string) => {
+    try {
+      const response = await fetch("/api/saved-items", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          glbUrl: glbUrl,
+          position: item.position,
+          rotation: item.rotation,
+          scale: item.scale,
+          label: label,
+        }),
+      });
+      
+      if (!response.ok) {
+        console.error("❌ Failed to save item to database");
+        return null;
+      }
+      
+      const savedItem = await response.json();
+      console.log(`💾 Saved item to database: ${savedItem._id}`);
+      return savedItem;
+    } catch (error) {
+      console.error("❌ Error saving item:", error);
+      return null;
+    }
+  }, []);
+
+  // Delete an item from scene, state, and database
+  const deleteItem = useCallback(async (itemId: number) => {
+    if (!sceneRef.current) return;
+    
+    const model = itemModelsRef.current.get(itemId);
+    const item = items.find(i => i.id === itemId);
+    
+    if (model) {
+      // Remove transform controls
+      const controls = transformControlsRef.current.get(itemId);
+      if (controls) {
+        controls.detach();
+        sceneRef.current.scene.remove(controls);
+        controls.dispose();
+        transformControlsRef.current.delete(itemId);
+      }
+      
+      // Remove shadow
+      const shadow = itemShadowRef.current.get(itemId);
+      if (shadow) {
+        sceneRef.current.scene.remove(shadow);
+        shadow.geometry.dispose();
+        if (shadow.material instanceof THREE.Material) {
+          shadow.material.dispose();
+        }
+        itemShadowRef.current.delete(itemId);
+      }
+      
+      // Remove model from scene
+      sceneRef.current.scene.remove(model);
+      model.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          if (Array.isArray(child.material)) {
+            child.material.forEach((mat) => mat.dispose());
+          } else if (child.material) {
+            child.material.dispose();
+          }
+        }
+      });
+      itemModelsRef.current.delete(itemId);
+      
+      console.log(`🗑️ Removed item ${itemId} from scene`);
+    }
+    
+    // Remove from state
+    setItems(prev => prev.filter(i => i.id !== itemId));
+    
+    // Clear selection
+    setSelectedItemId(null);
+    
+    // Delete from saved-items in MongoDB
+    if (item && item.modelPath) {
+      try {
+        // Extract the original glbUrl from the proxied URL
+        let glbUrl = item.modelPath;
+        if (glbUrl.includes('/api/proxy-model?url=')) {
+          glbUrl = decodeURIComponent(glbUrl.replace('/api/proxy-model?url=', ''));
+        }
+        
+        const response = await fetch(`/api/saved-items?glbUrl=${encodeURIComponent(glbUrl)}`, {
+          method: 'DELETE',
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          console.log(`💾 Deleted from saved-items: ${result.deletedCount} item(s)`);
+        } else {
+          console.error("❌ Failed to delete from saved-items");
+        }
+      } catch (error) {
+        console.error("❌ Error deleting from saved-items:", error);
+      }
+    }
+    
+    console.log(`✅ Item ${itemId} deleted successfully`);
+  }, [items, setSelectedItemId]);
+
+  // Handle delete confirmation
+  const confirmDelete = useCallback(() => {
+    if (itemToDelete !== null) {
+      deleteItem(itemToDelete);
+    }
+    setShowDeletePopup(false);
+    setItemToDelete(null);
+  }, [itemToDelete, deleteItem]);
+
+  const cancelDelete = useCallback(() => {
+    setShowDeletePopup(false);
+    setItemToDelete(null);
+  }, []);
+
+  // Backspace key listener for delete
+  useEffect(() => {
+    const handleBackspace = (e: KeyboardEvent) => {
+      if (e.key === "Backspace" || e.key === "Delete") {
+        // Don't trigger if typing in an input
+        const target = e.target as HTMLElement;
+        const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+        if (isInput) return;
+        
+        // Check if an item is selected
+        const selectedId = selectedItemIdRef.current;
+        if (selectedId !== null) {
+          e.preventDefault();
+          setItemToDelete(selectedId);
+          setShowDeletePopup(true);
+        }
+      }
+    };
+    
+    window.addEventListener("keydown", handleBackspace);
+    return () => window.removeEventListener("keydown", handleBackspace);
+  }, []);
+
   // Load items from MongoDB database and place them with Gemini
   const loadItemsFromDatabase = useCallback(async () => {
     if (!sceneRef.current) {
@@ -1989,6 +2137,9 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
             return [...prev, newItem];
           });
 
+          // Save to saved-items collection for future loads
+          await saveItemToDb(newItem, glbUrl, label);
+
           // Small delay between items to let the previous one render and update existingItems
           await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -2003,23 +2154,98 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     } catch (error) {
       console.error("❌ Error loading items from database:", error);
     }
-  }, [roomDimensions, items, captureTopDownImage, captureModelImage]);
+  }, [roomDimensions, items, captureTopDownImage, captureModelImage, saveItemToDb]);
 
-  // Auto-load items from database when room is ready
+  // Load saved items directly (without Gemini placement)
+  const loadSavedItems = useCallback(async () => {
+    if (!sceneRef.current) {
+      console.error("❌ Scene not ready for loading saved items");
+      return false;
+    }
+
+    console.log("📂 Checking for saved items...");
+
+    try {
+      const response = await fetch("/api/saved-items");
+      if (!response.ok) {
+        throw new Error(`Failed to fetch saved items: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      const savedItems = data.items || [];
+      
+      if (savedItems.length === 0) {
+        console.log("ℹ️ No saved items found");
+        return false;
+      }
+
+      console.log(`📦 Found ${savedItems.length} saved items - loading directly...`);
+
+      // Helper to proxy external URLs
+      const getProxiedUrl = (url: string): string => {
+        if (url.startsWith('/')) return url;
+        return `/api/proxy-model?url=${encodeURIComponent(url)}`;
+      };
+
+      // Load each saved item directly (no Gemini needed)
+      for (let i = 0; i < savedItems.length; i++) {
+        const saved = savedItems[i];
+        const proxiedUrl = getProxiedUrl(saved.glbUrl);
+        
+        console.log(`📥 Loading saved item ${i + 1}/${savedItems.length}: ${saved.label}`);
+
+        const newItem: PlacedItem = {
+          id: Date.now() + i,
+          modelPath: proxiedUrl,
+          position: saved.position,
+          rotation: saved.rotation,
+          scale: saved.scale,
+        };
+
+        setItems((prev) => {
+          if (prev.some((item) => item.modelPath === proxiedUrl)) {
+            return prev;
+          }
+          return [...prev, newItem];
+        });
+
+        // Small delay between items for smooth loading
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      console.log("✅ Finished loading saved items");
+      return true;
+    } catch (error) {
+      console.error("❌ Error loading saved items:", error);
+      return false;
+    }
+  }, []);
+
+  // Auto-load items when room is ready - check saved items first
   const hasAutoLoadedRef = useRef(false);
   useEffect(() => {
     // Only run once when room is ready (loading becomes false and room has dimensions)
     if (!loading && roomDimensions.width > 0 && sceneRef.current && !hasAutoLoadedRef.current) {
       hasAutoLoadedRef.current = true;
-      console.log("🚀 Room ready - auto-loading items from database...");
-      // Small delay to ensure room is fully rendered before capturing images
-      setTimeout(() => {
-        loadItemsFromDatabase().catch((err) => {
-          console.error("❌ Error auto-loading items from database:", err);
-        });
+      console.log("🚀 Room ready - checking for saved items first...");
+      
+      // Small delay to ensure room is fully rendered
+      setTimeout(async () => {
+        try {
+          // First try to load saved items
+          const hasSavedItems = await loadSavedItems();
+          
+          if (!hasSavedItems) {
+            // No saved items, load from database with Gemini placement
+            console.log("🔄 No saved items found - loading from items database with Gemini...");
+            await loadItemsFromDatabase();
+          }
+        } catch (err) {
+          console.error("❌ Error auto-loading items:", err);
+        }
       }, 1000);
     }
-  }, [loading, roomDimensions, loadItemsFromDatabase]);
+  }, [loading, roomDimensions, loadSavedItems, loadItemsFromDatabase]);
 
   // Expose addChair when ready (after room loads)
   useEffect(() => {
@@ -2086,13 +2312,32 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         ref={containerRef}
         className="w-full h-full absolute inset-0"
       />
-      {/* Optional: Add button overlay */}
-      {/* <button
-        onClick={addChair}
-        className="absolute top-4 right-4 z-20 pointer-events-auto bg-white/10 backdrop-blur-sm px-4 py-2 rounded border border-white/20 text-white hover:bg-white/20 transition-colors"
-      >
-        Add Chair
-      </button> */}
+      
+      {/* Delete Confirmation Popup - Glassmorphism */}
+      {showDeletePopup && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-md">
+          <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl p-8 shadow-2xl max-w-sm mx-4 ring-1 ring-white/10">
+            <h3 className="text-white text-xl font-semibold mb-3 drop-shadow-lg">Delete Item?</h3>
+            <p className="text-white/70 text-sm mb-8 leading-relaxed">
+              Are you sure you want to delete this item? This action cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={cancelDelete}
+                className="px-5 py-2.5 rounded-xl bg-white/10 backdrop-blur-sm border border-white/20 text-white hover:bg-white/20 transition-all duration-200 text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="px-5 py-2.5 rounded-xl bg-red-500/80 backdrop-blur-sm border border-red-400/30 text-white hover:bg-red-500 transition-all duration-200 text-sm font-medium shadow-lg shadow-red-500/20"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
