@@ -333,13 +333,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+    const apiKey = process.env.GOOGLE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
     console.log("🔑 Gemini API Key check:", apiKey ? `Present (${apiKey.substring(0, 10)}...)` : "❌ MISSING");
     
     if (!apiKey) {
-      console.error("❌ ERROR: GOOGLE_GEMINI_API_KEY not configured in environment variables");
+      console.error("❌ ERROR: GOOGLE_GEMINI_API_KEY or GEMINI_API_KEY not configured in environment variables");
       return NextResponse.json(
-        { error: 'GOOGLE_GEMINI_API_KEY not configured. Please add it to your .env file.' },
+        { error: 'GOOGLE_GEMINI_API_KEY or GEMINI_API_KEY not configured. Please add it to your .env file.' },
         { status: 500 }
       );
     }

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/mongodb";
 
-// GET - Fetch all saved items
+// GET - Fetch all saved items (with original item descriptions from items collection)
 export async function GET() {
   try {
     const dbName = process.env.MONGODB_DB || "deja-view";
@@ -14,17 +15,53 @@ export async function GET() {
     
     console.log(`📦 Fetched ${savedItems.length} saved items from MongoDB`);
     
+    // Collect valid dbItemIds to fetch original item descriptions
+    const dbItemIds: ObjectId[] = [];
+    for (const item of savedItems) {
+      if (item.dbItemId) {
+        try {
+          dbItemIds.push(new ObjectId(item.dbItemId));
+        } catch {
+          // Invalid ObjectId, skip
+        }
+      }
+    }
+    
+    // Batch fetch original items from items collection
+    const originalItemsMap = new Map<string, { main_item: string; description: string }>();
+    if (dbItemIds.length > 0) {
+      const originalItems = await db.collection("items")
+        .find({ _id: { $in: dbItemIds } })
+        .toArray();
+      
+      for (const orig of originalItems) {
+        const analysis = orig.analysis || {};
+        originalItemsMap.set(orig._id.toString(), {
+          main_item: analysis.main_item || analysis.label || "",
+          description: analysis.description || "",
+        });
+      }
+      console.log(`📋 Fetched ${originalItems.length} original items for description lookup`);
+    }
+    
     return NextResponse.json({
       success: true,
-      items: savedItems.map((item) => ({
-        _id: item._id.toString(),
-        glbUrl: item.glbUrl,
-        position: item.position,
-        rotation: item.rotation,
-        scale: item.scale,
-        label: item.label,
-        createdAt: item.createdAt,
-      })),
+      items: savedItems.map((item) => {
+        const origData = item.dbItemId ? originalItemsMap.get(item.dbItemId) : null;
+        return {
+          _id: item._id.toString(),
+          glbUrl: item.glbUrl,
+          position: item.position,
+          rotation: item.rotation,
+          scale: item.scale,
+          label: item.label,
+          dbItemId: item.dbItemId || null,
+          // Include original item's description data for search
+          originalMainItem: origData?.main_item || null,
+          originalDescription: origData?.description || null,
+          createdAt: item.createdAt,
+        };
+      }),
     });
   } catch (error) {
     console.error("❌ Error fetching saved items:", error);
@@ -39,7 +76,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { glbUrl, position, rotation, scale, label } = body;
+    const { glbUrl, position, rotation, scale, label, dbItemId } = body;
     
     if (!glbUrl || !position) {
       return NextResponse.json(
@@ -57,6 +94,7 @@ export async function POST(request: NextRequest) {
       rotation, // [x, y, z]
       scale,    // number
       label: label || "Item",
+      dbItemId: dbItemId || null, // Original item ID from items collection (for metadata lookup)
       createdAt: new Date(),
       updatedAt: new Date(),
     };
