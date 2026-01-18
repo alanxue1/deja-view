@@ -4,8 +4,10 @@ Extracts pin image URLs from public board pages.
 """
 
 import json
+import html as html_lib
 import logging
 import re
+import xml.etree.ElementTree as ET
 from typing import List, Optional
 from dataclasses import dataclass
 import httpx
@@ -42,6 +44,12 @@ class PinterestScraper:
     
     # Pattern to find Pinterest's embedded JSON data
     PWS_DATA_PATTERN = re.compile(r'<script[^>]*id="__PWS_DATA__"[^>]*>(.+?)</script>', re.DOTALL)
+
+    # Extract pin ID from canonical pin URL
+    PIN_URL_ID_PATTERN = re.compile(r'/pin/(\d+)/')
+
+    # Extract <img src="..."> from RSS <description> (after HTML unescape)
+    RSS_DESCRIPTION_IMG_PATTERN = re.compile(r'<img[^>]+src="([^"]+)"', re.IGNORECASE)
     
     def __init__(self):
         self._client: Optional[httpx.AsyncClient] = None
@@ -219,6 +227,112 @@ class PinterestScraper:
         except Exception as e:
             logger.debug(f"Error extracting pins from JSON: {e}")
             return None
+
+    def _board_url_to_rss_url(self, board_url: str) -> str:
+        """
+        Convert a normalized board URL to the RSS URL.
+
+        Example:
+          https://www.pinterest.com/user/board  -> https://www.pinterest.com/user/board.rss
+        """
+        base = board_url.rstrip("/")
+        if base.endswith(".rss"):
+            return base
+        return f"{base}.rss"
+
+    async def _extract_board_pins_from_rss(self, board_url: str, max_pins: int) -> Optional[List[ScrapedPin]]:
+        """
+        Extract pins from the board RSS feed.
+
+        RSS is typically cleaner than scraping the HTML page: it contains only pins saved to the board.
+        Returns None if RSS can't be fetched/parsed.
+        """
+        if not self._client:
+            return None
+
+        rss_url = self._board_url_to_rss_url(board_url)
+
+        try:
+            resp = await self._client.get(
+                rss_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.7",
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+                follow_redirects=True,
+            )
+            if resp.status_code != 200:
+                logger.debug(f"RSS fetch failed: {rss_url} HTTP {resp.status_code}")
+                return None
+            xml_text = resp.text
+        except Exception as e:
+            logger.debug(f"RSS fetch error: {e}")
+            return None
+
+        try:
+            root = ET.fromstring(xml_text)
+        except Exception as e:
+            logger.debug(f"RSS parse error: {e}")
+            return None
+
+        channel = root.find("channel")
+        if channel is None:
+            channel = next((el for el in root.iter() if el.tag.endswith("channel")), None)
+        if channel is None:
+            return None
+
+        items = channel.findall("item")
+        if not items:
+            items = [el for el in channel.iter() if el.tag.endswith("item")]
+        if not items:
+            return None
+
+        pins: List[ScrapedPin] = []
+        seen_pin_ids: set[str] = set()
+
+        for item in items:
+            if len(pins) >= max_pins:
+                break
+
+            title = (item.findtext("title") or "").strip() or None
+            link = (item.findtext("link") or "").strip()
+            guid = (item.findtext("guid") or "").strip()
+            pin_url = link or guid
+            if not pin_url:
+                continue
+
+            m = self.PIN_URL_ID_PATTERN.search(pin_url)
+            if not m:
+                continue
+            pin_id = m.group(1)
+            if pin_id in seen_pin_ids:
+                continue
+
+            desc_raw = item.findtext("description") or ""
+            desc_html = html_lib.unescape(desc_raw)
+            img_match = self.RSS_DESCRIPTION_IMG_PATTERN.search(desc_html)
+            if not img_match:
+                continue
+            image_url = img_match.group(1)
+            image_url = self._url_to_high_res(image_url)
+
+            seen_pin_ids.add(pin_id)
+            pins.append(
+                ScrapedPin(
+                    pin_id=pin_id,
+                    image_url=image_url,
+                    board_url=board_url,
+                    title=title,
+                    description=None,
+                )
+            )
+
+        if not pins:
+            return None
+
+        logger.info(f"Extracted {len(pins)} board pins from RSS feed")
+        return pins
     
     async def scrape_board(self, board_url: str, max_pins: int = 50) -> List[ScrapedPin]:
         """
@@ -260,50 +374,18 @@ class PinterestScraper:
             logger.error(f"HTTP error scraping board: {e}")
             raise Exception(f"Failed to scrape board: {e}")
         
-        # Try to extract pins from embedded JSON first (most accurate)
+        # Try to extract pins from embedded JSON first (most accurate when present)
         json_pins = self._extract_board_pins_from_json(html, board_url, max_pins)
         if json_pins:
             return json_pins
-        
-        # Fallback: regex-based extraction (less accurate, may include recommendations)
-        logger.info("Falling back to regex-based pin extraction")
-        
-        # Extract all image URLs
-        all_urls = self.IMAGE_PATTERN.findall(html)
-        logger.info(f"Found {len(all_urls)} image URLs in page")
-        
-        # Deduplicate by pin hash, keeping highest quality version
-        seen_hashes = set()
-        unique_pins = []
-        
-        for url in all_urls:
-            pin_hash = self._extract_pin_hash(url)
-            
-            if not pin_hash:
-                continue
-            
-            if pin_hash in seen_hashes:
-                continue
-            
-            # Skip tiny thumbnails (profile pics, icons) and PNG files (often app icons)
-            if '/30x30' in url or '/75x75' in url:
-                continue
-            if url.endswith('.png'):
-                continue
-            
-            seen_hashes.add(pin_hash)
-            
-            # Convert to high-res (736x is reliably accessible)
-            high_res_url = self._url_to_high_res(url)
-            
-            unique_pins.append(ScrapedPin(
-                pin_id=pin_hash,
-                image_url=f"https://{high_res_url}" if not high_res_url.startswith('http') else high_res_url,
-                board_url=board_url
-            ))
-            
-            if len(unique_pins) >= max_pins:
-                break
-        
-        logger.info(f"Extracted {len(unique_pins)} unique pins from board (regex fallback)")
-        return unique_pins
+
+        # Next best option: RSS feed (typically contains only the pins saved to the board).
+        rss_pins = await self._extract_board_pins_from_rss(board_url, max_pins)
+        if rss_pins:
+            return rss_pins
+
+        # Hard stop: do NOT fall back to regex (which includes recommendations).
+        logger.warning(
+            "Could not extract pins from board JSON or RSS; returning no pins to avoid recommendations"
+        )
+        return []
