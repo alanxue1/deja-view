@@ -62,6 +62,28 @@ class AnalyzeResponse(BaseModel):
     pins: List[AnalyzedPin]
 
 
+class AnalyzeJobStartResponse(BaseModel):
+    """Response from starting an analyze job."""
+    job_id: str = Field(..., description="Unique job identifier for polling status")
+
+
+class AnalyzeJobProgress(BaseModel):
+    """Progress data for a running analyze job."""
+    pins_completed: int = Field(..., description="Number of pins analyzed (success or skipped)")
+    pins_total: int = Field(..., description="Total number of pins to analyze")
+
+
+class AnalyzeJobStatusResponse(BaseModel):
+    """Response from polling an analyze job status."""
+    job_id: str = Field(..., description="Unique job identifier")
+    status: str = Field(..., description="Job status: queued | running | succeeded | failed | expired")
+    created_at: datetime = Field(..., description="Job creation timestamp")
+    updated_at: datetime = Field(..., description="Job last update timestamp")
+    error: Optional[str] = Field(None, description="Error message if status is failed")
+    progress: Optional[AnalyzeJobProgress] = Field(None, description="Progress for running jobs")
+    result: Optional[AnalyzeResponse] = Field(None, description="Result data if status is succeeded (or partial while running)")
+
+
 class ExtractItemImageRequest(BaseModel):
     """Request body for extracting an item from a Pinterest image."""
     image_url: str = Field(..., description="Direct Pinterest image URL (e.g., https://i.pinimg.com/...)")

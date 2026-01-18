@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # HTTP client
     request_timeout_seconds: int = 30
     max_retries: int = 3
+    
+    # Job processing
+    job_max_concurrent_jobs: int = 8
 
 
 # Global settings instance
