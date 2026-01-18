@@ -51,7 +51,7 @@ export default function Home() {
               
               {/* CTA - Clerk Sign In */}
               <div>
-                <Button asChild href="/sign-in" variant="soft" className="text-base font-normal">
+                <Button asChild href="/sign-in" variant="primary" className="text-base font-normal">
                   Get started
                 </Button>
               </div>
