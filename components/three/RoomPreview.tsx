@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { initThree, cleanupThree, type ThreeScene } from "@/lib/three/init";
 import { createOrbitControls, type OrbitControls } from "@/lib/three/controls";
 import { setupResize } from "@/lib/three/resize";
 import { cn } from "@/lib/cn";
+import ExplorePrompt from "./ExplorePrompt";
 
 interface RoomPreviewProps {
   className?: string;
@@ -20,6 +21,11 @@ export const RoomPreview: React.FC<RoomPreviewProps> = ({ className }) => {
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const modelRef = useRef<THREE.Group | null>(null);
   const [loading, setLoading] = useState(true);
+  const [promptDismissed, setPromptDismissed] = useState(false);
+
+  const handlePromptDismiss = useCallback(() => {
+    setPromptDismissed(true);
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -183,11 +189,16 @@ export const RoomPreview: React.FC<RoomPreviewProps> = ({ className }) => {
   }, []);
 
   return (
-    <div className={cn("w-full h-full relative", className)}>
+    <div 
+      className={cn("w-full h-full relative", className)}
+      onPointerDown={handlePromptDismiss}
+    >
       <div
         ref={containerRef}
         className="w-full h-full absolute inset-0"
       />
+      {/* Explore prompt - shows after loading, fades on interaction */}
+      <ExplorePrompt visible={!loading && !promptDismissed} />
     </div>
   );
 };
