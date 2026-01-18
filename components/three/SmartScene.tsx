@@ -647,9 +647,9 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         scene.scene.add(floorControls);
         floorControlsRef.current = floorControls;
         
-        // Show calibration hint immediately
-        setRoomOverlayHint(ROOM_OVERLAY_HINT_CALIBRATION);
-        isCalibratingFloorRef.current = true;
+        // Skip calibration - show control hint immediately
+        setRoomOverlayHint(ROOM_OVERLAY_HINT_CONTROL);
+        isCalibratingFloorRef.current = false;
         
         // Disable camera controls when dragging floor mesh
         floorControls.addEventListener("dragging-changed", (event: any) => {
@@ -709,34 +709,13 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         let floorPlaneTriggered = false;
         
         const showFloorPlane = () => {
+          // Skip showing the green floor plane - calibration disabled
           if (floorPlaneTriggered) return;
           floorPlaneTriggered = true;
           
-          if (floorMeshRef.current) {
-            floorMeshRef.current.visible = true;
-          }
-          if (floorControlsRef.current) {
-            floorControlsRef.current.enabled = true;
-            floorControlsRef.current.visible = true;
-          }
-          
-          // Scale in the floor mesh
-          if (floorMeshRef.current) {
-            const scaleStartTime = Date.now();
-            const scaleDuration = 300; // 300ms scale animation
-            const animateScale = () => {
-              if (!isMountedRef.current || !floorMeshRef.current) return;
-              const elapsed = Date.now() - scaleStartTime;
-              const progress = Math.min(elapsed / scaleDuration, 1);
-              const eased = 1 - Math.pow(1 - progress, 3);
-              floorMeshRef.current.scale.set(eased, eased, eased);
-              if (progress < 1) {
-                requestAnimationFrame(animateScale);
-              }
-            };
-            animateScale();
-          }
-          console.log("🏠 Green floor calibration plane now visible");
+          // Keep floor mesh and controls hidden
+          // The floor Y is already set from room model detection
+          console.log("🏠 Floor calibration skipped - using detected floor Y");
         };
         
         const animateAppearance = () => {
@@ -1582,52 +1561,80 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     });
   }, [items]);
 
-  // Capture top-down image of the room
+  // Capture top-down image of the room using a render target (no extra WebGL context)
   const captureTopDownImage = useCallback(async (): Promise<string> => {
     if (!sceneRef.current) throw new Error("Scene not initialized");
 
     const scene = sceneRef.current;
     const renderer = scene.renderer;
-    const camera = scene.camera;
+    const mainCamera = scene.camera;
 
-    // Save current camera state
-    const originalPosition = camera.position.clone();
-    const originalRotation = camera.rotation.clone();
+    // Save ALL main camera state
+    const savedPosition = mainCamera.position.clone();
+    const savedQuaternion = mainCamera.quaternion.clone();
+    const savedUp = mainCamera.up.clone();
 
-    // Set camera to top-down view
-    const roomHeight = roomDimensions.depth * 1.5; // Position camera above room
-    camera.position.set(0, roomHeight, 0);
-    camera.lookAt(0, 0, 0);
-    camera.up.set(0, 0, -1); // Adjust up vector for top-down
+    // Create render target for offscreen rendering
+    const captureSize = 1024;
+    const renderTarget = new THREE.WebGLRenderTarget(captureSize, captureSize, {
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+    });
 
-    // Render to get image - reduce quality and size significantly for faster transfer
-    // Reduce renderer size temporarily for smaller image
-    const originalWidth = renderer.domElement.width;
-    const originalHeight = renderer.domElement.height;
-    const maxDimension = 1024; // Limit image to 1024px max dimension
+    // Create a temporary camera for the capture (doesn't affect main camera)
+    const captureCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    const roomHeight = roomDimensions.depth * 1.5;
+    captureCamera.position.set(0, roomHeight, 0);
+    captureCamera.lookAt(0, 0, 0);
+    captureCamera.up.set(0, 0, -1);
+    captureCamera.updateProjectionMatrix();
     
-    if (originalWidth > maxDimension || originalHeight > maxDimension) {
-      const scale = maxDimension / Math.max(originalWidth, originalHeight);
-      renderer.setSize(Math.floor(originalWidth * scale), Math.floor(originalHeight * scale), false);
+    // Render to target using the SAME renderer (no new WebGL context)
+    renderer.setRenderTarget(renderTarget);
+    renderer.render(scene.scene, captureCamera);
+    renderer.setRenderTarget(null); // Reset to default (screen)
+    
+    // Read pixels from render target
+    const pixels = new Uint8Array(captureSize * captureSize * 4);
+    renderer.readRenderTargetPixels(renderTarget, 0, 0, captureSize, captureSize, pixels);
+    
+    // Convert to canvas and then to data URL
+    const canvas = document.createElement('canvas');
+    canvas.width = captureSize;
+    canvas.height = captureSize;
+    const ctx = canvas.getContext('2d')!;
+    const imageData = ctx.createImageData(captureSize, captureSize);
+    
+    // Flip vertically (WebGL has origin at bottom-left, canvas at top-left)
+    for (let y = 0; y < captureSize; y++) {
+      for (let x = 0; x < captureSize; x++) {
+        const srcIdx = ((captureSize - y - 1) * captureSize + x) * 4;
+        const dstIdx = (y * captureSize + x) * 4;
+        imageData.data[dstIdx] = pixels[srcIdx];
+        imageData.data[dstIdx + 1] = pixels[srcIdx + 1];
+        imageData.data[dstIdx + 2] = pixels[srcIdx + 2];
+        imageData.data[dstIdx + 3] = pixels[srcIdx + 3];
+      }
     }
+    ctx.putImageData(imageData, 0, 0);
+    const dataURL = canvas.toDataURL("image/jpeg", 0.7);
     
-    renderer.render(scene.scene, camera);
-    const dataURL = renderer.domElement.toDataURL("image/jpeg", 0.7); // Use JPEG at 70% quality for smaller size
-    
-    // Restore original renderer size
-    renderer.setSize(originalWidth, originalHeight, false);
+    // Cleanup render target
+    renderTarget.dispose();
 
-    // Restore original camera state
-    camera.position.copy(originalPosition);
-    camera.rotation.copy(originalRotation);
-    camera.up.set(0, 1, 0); // Reset up vector
+    // Ensure main camera is unchanged (it should be, but double-check)
+    mainCamera.position.copy(savedPosition);
+    mainCamera.quaternion.copy(savedQuaternion);
+    mainCamera.up.copy(savedUp);
 
     return dataURL;
   }, [roomDimensions]);
 
-  // Capture an isolated image of a model (for sending to Gemini)
+  // Capture an isolated image of a model (for sending to Gemini) using render target
   const captureModelImage = useCallback(async (modelPath: string): Promise<{ image: string; dimensions: { width: number; depth: number; height: number } }> => {
     if (!sceneRef.current) throw new Error("Scene not initialized");
+    
+    const mainRenderer = sceneRef.current.renderer;
 
     return new Promise((resolve, reject) => {
       const loader = new GLTFLoader();
@@ -1662,7 +1669,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
             const center = box.getCenter(new THREE.Vector3());
             model.position.set(-center.x * itemScale, -center.y * itemScale, -center.z * itemScale);
             
-            // Create a temporary scene for rendering
+            // Create a temporary scene for rendering (separate from main scene)
             const tempScene = new THREE.Scene();
             tempScene.background = new THREE.Color(0xf0f0f0); // Light gray background
             tempScene.add(model);
@@ -1680,16 +1687,47 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
             tempCamera.position.set(0, modelHeight * 2, 0);
             tempCamera.lookAt(0, 0, 0);
             tempCamera.up.set(0, 0, -1);
+            tempCamera.updateProjectionMatrix();
             
-            // Create a temporary renderer
-            const tempRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            tempRenderer.setSize(512, 512); // Fixed size for model preview
-            tempRenderer.render(tempScene, tempCamera);
+            // Use render target instead of creating new renderer
+            const captureSize = 512;
+            const renderTarget = new THREE.WebGLRenderTarget(captureSize, captureSize, {
+              format: THREE.RGBAFormat,
+              type: THREE.UnsignedByteType,
+            });
             
-            const imageData = tempRenderer.domElement.toDataURL("image/jpeg", 0.8);
+            // Render to target using main renderer
+            mainRenderer.setRenderTarget(renderTarget);
+            mainRenderer.render(tempScene, tempCamera);
+            mainRenderer.setRenderTarget(null);
+            
+            // Read pixels
+            const pixels = new Uint8Array(captureSize * captureSize * 4);
+            mainRenderer.readRenderTargetPixels(renderTarget, 0, 0, captureSize, captureSize, pixels);
+            
+            // Convert to canvas and data URL
+            const canvas = document.createElement('canvas');
+            canvas.width = captureSize;
+            canvas.height = captureSize;
+            const ctx = canvas.getContext('2d')!;
+            const imgData = ctx.createImageData(captureSize, captureSize);
+            
+            // Flip vertically
+            for (let y = 0; y < captureSize; y++) {
+              for (let x = 0; x < captureSize; x++) {
+                const srcIdx = ((captureSize - y - 1) * captureSize + x) * 4;
+                const dstIdx = (y * captureSize + x) * 4;
+                imgData.data[dstIdx] = pixels[srcIdx];
+                imgData.data[dstIdx + 1] = pixels[srcIdx + 1];
+                imgData.data[dstIdx + 2] = pixels[srcIdx + 2];
+                imgData.data[dstIdx + 3] = pixels[srcIdx + 3];
+              }
+            }
+            ctx.putImageData(imgData, 0, 0);
+            const imageData = canvas.toDataURL("image/jpeg", 0.8);
             
             // Cleanup
-            tempRenderer.dispose();
+            renderTarget.dispose();
             model.traverse((child) => {
               if (child instanceof THREE.Mesh) {
                 child.geometry.dispose();
@@ -1831,6 +1869,157 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       alert(`Failed to add chair: ${errorMessage}`);
     }
   }, [roomDimensions, items, onAddItem, captureTopDownImage, loadAndRenderItem]);
+
+  // Load items from MongoDB database and place them with Gemini
+  const loadItemsFromDatabase = useCallback(async () => {
+    if (!sceneRef.current) {
+      console.error("❌ Scene not ready for loading database items");
+      return;
+    }
+
+    console.log("🗄️ Loading items from MongoDB database...");
+
+    try {
+      // 1. Fetch items from MongoDB API
+      const response = await fetch("/api/items");
+      if (!response.ok) {
+        throw new Error(`Failed to fetch items: ${response.status} ${response.statusText}`);
+      }
+      
+      const dbItems = await response.json();
+      console.log(`📦 Fetched ${dbItems.length} items from database`);
+
+      if (dbItems.length === 0) {
+        console.log("ℹ️ No items found in database with status: ready");
+        return;
+      }
+
+      // Helper to proxy external URLs through our API to avoid CORS
+      const getProxiedUrl = (url: string): string => {
+        if (url.startsWith('/')) return url; // Local URLs don't need proxy
+        return `/api/proxy-model?url=${encodeURIComponent(url)}`;
+      };
+
+      // 2. Process each item sequentially to avoid overwhelming Gemini API
+      for (let i = 0; i < dbItems.length; i++) {
+        const dbItem = dbItems[i];
+        const glbUrl = dbItem.asset?.glbUrl;
+        
+        if (!glbUrl) {
+          console.warn(`⚠️ Item ${dbItem._id} has no glbUrl, skipping...`);
+          continue;
+        }
+
+        // Proxy external URLs to avoid CORS
+        const proxiedUrl = getProxiedUrl(glbUrl);
+        console.log(`🔄 Processing item ${i + 1}/${dbItems.length}: ${glbUrl} -> ${proxiedUrl}`);
+
+        try {
+          // Capture top-down image of room (with existing items)
+          const roomImageData = await captureTopDownImage();
+
+          // Capture model image and get dimensions (use proxied URL)
+          const { image: modelImageData, dimensions: modelDimensions } = await captureModelImage(proxiedUrl);
+
+          // Get label from analysis or use default
+          const label = dbItem.analysis?.label || dbItem.analysis?.type || "Furniture";
+
+          // Call Gemini API for placement
+          console.log(`📡 Getting Gemini placement for: ${label}`);
+          const placementResponse = await fetch("/api/get-placement", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              image: roomImageData,
+              modelImage: modelImageData,
+              modelDimensions: modelDimensions,
+              label: label,
+              roomWidth: roomDimensions.width,
+              roomDepth: roomDimensions.depth,
+              existingItems: items.map((item) => ({
+                label: item.modelPath?.includes('couch') ? "Couch" : 
+                       item.modelPath?.includes('plant') ? "Plant" : 
+                       item.modelPath?.includes('chair') ? "Chair" : "Item",
+                position: item.position,
+                rotation: item.rotation,
+              })),
+            }),
+          });
+
+          if (!placementResponse.ok) {
+            console.error(`❌ Gemini API error for item ${dbItem._id}`);
+            continue;
+          }
+
+          const placement = await placementResponse.json();
+          console.log(`📍 Placement for ${label}:`, placement);
+
+          // Convert normalized coordinates to world coordinates
+          const geminiWidth = roomDimensions.width || 5;
+          const geminiDepth = roomDimensions.depth || 5;
+          const scaledWidth = roomDimensions.scaledWidth || (geminiWidth * (roomDimensions.scaleFactor || 1));
+          const scaledDepth = roomDimensions.scaledDepth || (geminiDepth * (roomDimensions.scaleFactor || 1));
+          
+          const geminiX = (placement.x - 0.5) * geminiWidth;
+          const geminiZ = (placement.y - 0.5) * geminiDepth;
+          const finalX = (geminiX / geminiWidth) * scaledWidth;
+          const finalZ = (geminiZ / geminiDepth) * scaledDepth;
+
+          const floorY = roomDimensions.floorY || -0.5315285924741149;
+          const finalY = floorY + 0.3; // Placeholder - will be recalculated in loadAndRenderItem
+
+          // Create PlacedItem with unique ID (use proxied URL)
+          const newItem: PlacedItem = {
+            id: Date.now() + i, // Ensure unique ID for each item
+            modelPath: proxiedUrl,
+            position: [finalX, finalY, finalZ],
+            rotation: [0, placement.rotation || 0, 0],
+            scale: typeof placement.scale === "number" && Number.isFinite(placement.scale) ? placement.scale : 1,
+          };
+
+          console.log(`✅ Adding item from database: ${label} at (${finalX.toFixed(2)}, ${finalZ.toFixed(2)})`);
+
+          // Add item to state
+          setItems((prev) => {
+            if (prev.some((i) => i.id === newItem.id)) {
+              return prev;
+            }
+            return [...prev, newItem];
+          });
+
+          // Small delay between items to let the previous one render and update existingItems
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+        } catch (itemError) {
+          console.error(`❌ Error processing item ${dbItem._id}:`, itemError);
+          // Continue with next item
+        }
+      }
+
+      console.log("✅ Finished loading all items from database");
+
+    } catch (error) {
+      console.error("❌ Error loading items from database:", error);
+    }
+  }, [roomDimensions, items, captureTopDownImage, captureModelImage]);
+
+  // Auto-load items from database when room is ready
+  const hasAutoLoadedRef = useRef(false);
+  useEffect(() => {
+    // Only run once when room is ready (loading becomes false and room has dimensions)
+    if (!loading && roomDimensions.width > 0 && sceneRef.current && !hasAutoLoadedRef.current) {
+      hasAutoLoadedRef.current = true;
+      console.log("🚀 Room ready - auto-loading items from database...");
+      // Small delay to ensure room is fully rendered before capturing images
+      setTimeout(() => {
+        loadItemsFromDatabase().catch((err) => {
+          console.error("❌ Error auto-loading items from database:", err);
+        });
+      }, 1000);
+    }
+  }, [loading, roomDimensions, loadItemsFromDatabase]);
 
   // Expose addChair when ready (after room loads)
   useEffect(() => {

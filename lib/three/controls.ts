@@ -10,6 +10,7 @@ export interface OrbitControls {
   verticalOffset: number;
   enabled: boolean;
   setEnabled: (enabled: boolean) => void;
+  syncFromCamera: () => void; // Sync internal state from current camera position
   update: () => void;
   dispose: () => void;
 }
@@ -117,6 +118,15 @@ export function createOrbitControls(
         isDragging = false;
         container.style.cursor = "grab";
       }
+    },
+    syncFromCamera: () => {
+      // Sync internal state from current camera position
+      spherical.setFromVector3(camera.position);
+      targetTheta = spherical.theta;
+      targetPhi = spherical.phi;
+      // Reset vertical offset since camera was moved externally
+      verticalOffset = 0;
+      targetVerticalOffset = 0;
     },
     update: () => {
       // Smooth interpolation with moderate damping for all movements

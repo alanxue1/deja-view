@@ -1,18 +1,22 @@
 import { MongoClient, Db } from "mongodb";
 
-const uri = process.env.MONGODB_DEV_URI;
-const uriProd = process.env.MONGODB_PROD_URI;
 const options = {};
 
 let clientPromise: Promise<MongoClient> | null = null;
 
 function getClientPromise(): Promise<MongoClient> {
   const isDev = process.env.NODE_ENV === "development";
+  
+  // Read env vars inside the function - prioritize MONGODB_ATLAS_URI
+  const uri = process.env.MONGODB_ATLAS_URI || process.env.MONGODB_DEV_URI;
+  const uriProd = process.env.MONGODB_ATLAS_URI || process.env.MONGODB_PROD_URI;
   const activeUri = isDev ? uri : uriProd;
+  
+  console.log("🔗 MongoDB connecting to:", activeUri?.substring(0, 40) + "...");
 
   if (!activeUri) {
     throw new Error(
-      `Add ${isDev ? "MONGODB_DEV_URI" : "MONGODB_PROD_URI"} to .env.local (e.g. mongodb+srv://... or mongodb://localhost:27017)`
+      `Add MONGODB_DEV_URI or MONGODB_ATLAS_URI to .env.local (e.g. mongodb+srv://...)`
     );
   }
 
