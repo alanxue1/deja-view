@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_image_model: str = "gemini-2.5-flash-image"
     
+    # Replicate (for 3D model generation)
+    replicate_api_token: str = ""
+    replicate_trellis_version: str = "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c"
+    
     # Cloudflare R2 (object storage)
     r2_access_key_id: str = ""
     r2_secret_access_key: str = ""
