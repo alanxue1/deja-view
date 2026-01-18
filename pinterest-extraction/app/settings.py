@@ -49,6 +49,16 @@ class Settings(BaseSettings):
     
     # Job processing
     job_max_concurrent_jobs: int = 8
+    
+    # MongoDB Atlas
+    mongodb_atlas_uri: str = ""
+    mongodb_db: str = "deja-view"
+    demo_room_id: str = ""
+    
+    # Pinterest Board Watcher
+    pinterest_board_url: str = ""
+    watcher_poll_interval_seconds: int = 30
+    watcher_max_pins: int = 50
 
 
 # Global settings instance
