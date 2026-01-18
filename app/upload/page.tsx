@@ -73,7 +73,7 @@ export default function UploadPage() {
         <div className="w-full max-w-2xl flex flex-col items-center">
           {/* Main Title */}
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-serif text-[var(--ink)] font-normal text-center mb-12">
-            Upload your First Memory.
+            {user ? "Upload your Next Memory." : "Upload your First Memory."}
           </h1>
 
           {/* Memory Name Input */}

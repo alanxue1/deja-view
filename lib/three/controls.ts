@@ -8,13 +8,16 @@ export interface OrbitControls {
   minRadius: number;
   maxRadius: number;
   verticalOffset: number;
+  enabled: boolean;
+  setEnabled: (enabled: boolean) => void;
   update: () => void;
   dispose: () => void;
 }
 
 export function createOrbitControls(
   camera: THREE.PerspectiveCamera,
-  container: HTMLElement
+  container: HTMLElement,
+  options?: { enabled?: boolean }
 ): OrbitControls {
   const spherical = new THREE.Spherical();
   spherical.setFromVector3(camera.position);
@@ -26,12 +29,14 @@ export function createOrbitControls(
   let maxRadius = 100;
   let verticalOffset = 0; // Current vertical offset for camera position
   let targetVerticalOffset = 0; // Target vertical offset (for smooth interpolation)
+  let enabled = options?.enabled !== false; // Default to enabled unless explicitly disabled
   
   // Target spherical values for smooth interpolation - initialize from current spherical
   let targetTheta = spherical.theta;
   let targetPhi = spherical.phi;
 
   const onMouseDown = (e: MouseEvent) => {
+    if (!enabled) return; // Don't start dragging if disabled
     isDragging = true;
     previousMousePosition = { x: e.clientX, y: e.clientY };
     container.style.cursor = "grabbing";
@@ -102,6 +107,16 @@ export function createOrbitControls(
     },
     set verticalOffset(value: number) {
       verticalOffset = value;
+    },
+    get enabled() {
+      return enabled;
+    },
+    setEnabled: (value: boolean) => {
+      enabled = value;
+      if (!value && isDragging) {
+        isDragging = false;
+        container.style.cursor = "grab";
+      }
     },
     update: () => {
       // Smooth interpolation with moderate damping for all movements
