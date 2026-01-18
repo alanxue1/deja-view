@@ -16,6 +16,31 @@ interface PlacedItem {
   rotation: [number, number, number];
   // Multiplier applied on top of the base-fit scale computed in `loadAndRenderItem`
   scale?: number;
+  // MongoDB item ID for linking to database metadata
+  dbItemId?: string;
+}
+
+// Database item type for the onItemClick callback
+export interface DatabaseItemData {
+  _id: string;
+  source?: {
+    type?: string;
+    url?: string;
+  };
+  analysis?: {
+    main_item?: string;
+    description?: string;
+    style?: string;
+    materials?: string[];
+    colors?: string[];
+    confidence?: number;
+    label?: string;
+    type?: string;
+  };
+  asset?: {
+    glbUrl?: string;
+    imageUrl?: string;
+  };
 }
 
 interface SmartSceneProps {
@@ -23,6 +48,7 @@ interface SmartSceneProps {
   roomModelPath?: string;
   onAddItem?: (item: PlacedItem) => void;
   onReady?: (addChair: () => Promise<void>) => void; // Callback to expose addChair function
+  onItemClick?: (item: DatabaseItemData) => void; // Callback when an item is clicked (for showing detail modal)
 }
 
 type RoomOverlayHintEventDetail = { text: string };
@@ -43,6 +69,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   roomModelPath = "/davidsbedroom.glb",
   onAddItem,
   onReady,
+  onItemClick,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<ThreeScene | null>(null);
@@ -75,6 +102,8 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   const floorControlsRef = useRef<TransformControls | null>(null);
   const itemShadowRef = useRef<Map<number, THREE.Mesh>>(new Map());
   const isCalibratingFloorRef = useRef(false);
+  // Store database item metadata for each placed item (keyed by PlacedItem.id)
+  const dbItemsMetaRef = useRef<Map<number, DatabaseItemData>>(new Map());
 
   const setRoomOverlayHint = useCallback((text: string) => {
     if (typeof window === "undefined") return;
@@ -378,6 +407,17 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       if (hitId != null && Number.isFinite(hitId)) {
         if (selectedItemIdRef.current === hitId) setSelectedItemId(null);
         else setSelectedItemId(hitId);
+        
+        // Call onItemClick callback with the database item metadata
+        if (onItemClick) {
+          const dbItemMeta = dbItemsMetaRef.current.get(hitId);
+          if (dbItemMeta) {
+            console.log("[pick] Calling onItemClick with item:", dbItemMeta._id);
+            onItemClick(dbItemMeta);
+          } else {
+            console.log("[pick] No database metadata found for item:", hitId);
+          }
+        }
       } else {
         setSelectedItemId(null);
       }
@@ -391,7 +431,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       window.removeEventListener("pointerdown", onPointerDownCapture, { capture: true } as any);
       window.removeEventListener("pointerup", onPointerUpCapture, { capture: true } as any);
     };
-  }, [setSelectedItemId, loading]);
+  }, [setSelectedItemId, loading, onItemClick]);
 
   const ensureItemContactShadow = useCallback(
     (
@@ -2119,13 +2159,23 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           const finalY = floorY + 0.3; // Placeholder - will be recalculated in loadAndRenderItem
 
           // Create PlacedItem with unique ID (use proxied URL)
+          const itemId = Date.now() + i;
           const newItem: PlacedItem = {
-            id: Date.now() + i, // Ensure unique ID for each item
+            id: itemId, // Ensure unique ID for each item
             modelPath: proxiedUrl,
             position: [finalX, finalY, finalZ],
             rotation: [0, placement.rotation || 0, 0],
             scale: typeof placement.scale === "number" && Number.isFinite(placement.scale) ? placement.scale : 1,
+            dbItemId: dbItem._id,
           };
+
+          // Store database item metadata for click callbacks
+          dbItemsMetaRef.current.set(itemId, {
+            _id: dbItem._id,
+            source: dbItem.source,
+            analysis: dbItem.analysis,
+            asset: dbItem.asset,
+          });
 
           console.log(`✅ Adding item from database: ${label} at (${finalX.toFixed(2)}, ${finalZ.toFixed(2)})`);
 
