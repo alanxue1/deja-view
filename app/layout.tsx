@@ -4,6 +4,7 @@ import { Playfair_Display, Inter } from "next/font/google";
 import "./globals.css";
 import CustomCursor from "@/components/effects/CustomCursor";
 import SmoothScroll from "@/components/effects/SmoothScroll";
+import GlobalHeader from "@/components/layout/GlobalHeader";
 
 const playfairDisplay = Playfair_Display({
   subsets: ["latin"],
@@ -37,10 +38,14 @@ export default function RootLayout({
           <CustomCursor />
           {hasClerk ? (
             <ClerkProvider signInUrl="/sign-in" signUpUrl="/sign-up">
+              <GlobalHeader />
               {children}
             </ClerkProvider>
           ) : (
-            children
+            <>
+              <GlobalHeader />
+              {children}
+            </>
           )}
         </SmoothScroll>
       </body>

@@ -13,6 +13,25 @@
   font-display: swap;
 }
 
+/* Tiempos Headline Font */
+@font-face {
+  font-family: 'Tiempos Headline';
+  src: url('/fonts/TiemposHeadline-Regular.woff2') format('woff2'),
+       url('/fonts/TiemposHeadline-Regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Tiempos Headline';
+  src: url('/fonts/TiemposHeadline-Semibold.woff2') format('woff2'),
+       url('/fonts/TiemposHeadline-Semibold.woff') format('woff');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 @layer base {
   * {
     @apply border-border;
@@ -40,6 +59,10 @@
   
   .font-sohne {
     font-family: var(--font-sohne);
+  }
+
+  .font-tiempos {
+    font-family: var(--font-tiempos);
   }
 }
 
@@ -134,11 +157,3 @@
   );
 }
 
-/* Global canvas rounding (e.g. Three.js renderer canvas) */
-canvas {
-  border-radius: 45px;
-  border-top-left-radius: 45px;
-  border-top-right-radius: 45px;
-  border-bottom-right-radius: 45px;
-  border-bottom-left-radius: 45px;
-}

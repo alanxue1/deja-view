@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from "react";
 import Container from "@/components/ui/Container";
-import OverlayHeader from "@/components/overlay/OverlayHeader";
 import LoadingProgress from "@/components/ui/LoadingProgress";
 import Button from "@/components/ui/Button";
 import ScrollIndicator from "@/components/ui/ScrollIndicator";
@@ -30,8 +29,7 @@ export default function TestPage() {
   }, [isAnimating]);
 
   return (
-    <main className="min-h-screen bg-[var(--bg)]">
-      <OverlayHeader overlay={false} />
+    <main className="min-h-screen bg-[var(--bg)] pt-20">
       <Container className="py-12">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-3xl font-serif text-[var(--ink)] mb-8">
