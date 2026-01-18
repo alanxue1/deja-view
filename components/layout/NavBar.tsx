@@ -2,12 +2,8 @@
 
 import React from "react";
 import Link from "next/link";
-<<<<<<< HEAD
-import { SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
-=======
 import { useRouter } from "next/navigation";
 import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
->>>>>>> 65b7ed7 (Align sidebar content with hamburger menu icon position and improve 3D hover preview)
 import Button from "@/components/ui/Button";
 
 export const NavBar: React.FC = () => {

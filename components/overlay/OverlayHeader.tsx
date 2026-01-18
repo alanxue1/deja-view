@@ -3,12 +3,8 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { User } from "lucide-react";
-<<<<<<< HEAD
-import { SignedIn, SignedOut, UserButton, useUser } from "@clerk/nextjs";
-=======
 import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/nextjs";
 import Hamburger from "hamburger-react";
->>>>>>> 65b7ed7 (Align sidebar content with hamburger menu icon position and improve 3D hover preview)
 import Button from "@/components/ui/Button";
 import Sidebar from "@/components/layout/Sidebar";
 
@@ -96,29 +92,6 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true }) 
               </button>
             </div>
 
-<<<<<<< HEAD
-          {/* Center: Deja View */}
-          <div className="flex items-center justify-center">
-            <button
-              onClick={handleHomeClick}
-              className="text-[18px] text-[var(--ink)] hover:opacity-70 transition-opacity font-normal font-sohne cursor-pointer bg-transparent border-0 p-0"
-              data-cursor="hover"
-            >
-              Deja View
-            </button>
-          </div>
-
-          {/* Right: Auth - UserButton when signed in, SignIn when signed out */}
-          <div className="flex items-center justify-end">
-            <SignedIn>
-              <UserButton afterSignOutUrl="/" />
-            </SignedIn>
-            <SignedOut>
-              <Button asChild href="/sign-in" variant="ghost" className="text-[16px] font-normal font-sohne">
-                Login
-              </Button>
-            </SignedOut>
-=======
             {/* Right: Auth - UserButton when signed in, SignIn when signed out */}
             <div className="flex items-center justify-end">
               <SignedIn>
@@ -135,7 +108,6 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true }) 
                 </SignInButton>
               </SignedOut>
             </div>
->>>>>>> 65b7ed7 (Align sidebar content with hamburger menu icon position and improve 3D hover preview)
           </div>
         </div>
       </nav>
