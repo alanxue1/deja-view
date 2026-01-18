@@ -10,6 +10,7 @@ import Sidebar from "@/components/layout/Sidebar";
 
 interface OverlayHeaderProps {
   overlay?: boolean;
+  showHamburger?: boolean;
   onRoomSelect?: (modelPath: string) => void;
   currentRoomPath?: string;
 }
@@ -20,7 +21,7 @@ const ROOM_NAMES: Record<string, string> = {
   "/uoft-student-dorm.glb": "Uoft Student Dorm",
 };
 
-export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, onRoomSelect, currentRoomPath }) => {
+export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, showHamburger = true, onRoomSelect, currentRoomPath }) => {
   const currentRoomName = currentRoomPath ? ROOM_NAMES[currentRoomPath] || "Room" : null;
   const router = useRouter();
   const clerk = useClerk();
@@ -302,17 +303,21 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, on
           </div>
         </div>
       </header>
-      <div className="fixed top-6 left-6 z-[110] pointer-events-auto">
-        <div className="p-2">
-          <Hamburger 
-            toggled={isOpen} 
-            toggle={setOpen} 
-            size={28}
-            color="#5f6368"
-          />
-        </div>
-      </div>
-      <Sidebar isOpen={isOpen} onClose={() => setOpen(false)} onRoomSelect={onRoomSelect} />
+      {showHamburger && (
+        <>
+          <div className="fixed top-6 left-6 z-[110] pointer-events-auto">
+            <div className="p-2">
+              <Hamburger 
+                toggled={isOpen} 
+                toggle={setOpen} 
+                size={28}
+                color="#5f6368"
+              />
+            </div>
+          </div>
+          <Sidebar isOpen={isOpen} onClose={() => setOpen(false)} onRoomSelect={onRoomSelect} />
+        </>
+      )}
     </>
   );
 };
