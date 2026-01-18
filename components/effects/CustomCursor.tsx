@@ -1,13 +1,20 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { shouldUseMotion, isTouchDevice } from "@/lib/device";
 import { cn } from "@/lib/cn";
 
 export const CustomCursor: React.FC = () => {
+  const pathname = usePathname();
+  const isAuthPage = pathname?.startsWith("/sign-in") || pathname?.startsWith("/sign-up");
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isHovering, setIsHovering] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+
+  // The cursor uses `mix-blend-difference` by default, which can create odd
+  // high-contrast artifacts over Clerk UI (e.g., OAuth buttons). Keep the cursor,
+  // but switch to normal blending on auth pages.
 
   useEffect(() => {
     if (isTouchDevice() || !shouldUseMotion()) {
@@ -75,7 +82,10 @@ export const CustomCursor: React.FC = () => {
       {/* Outer ring */}
       <div
         className={cn(
-          "fixed top-0 left-0 w-8 h-8 rounded-full border-2 border-[var(--ink)] pointer-events-none z-[9999] mix-blend-difference transition-all duration-300 ease-out",
+          "fixed top-0 left-0 w-8 h-8 rounded-full border-2 pointer-events-none z-[9999] transition-all duration-300 ease-out",
+          isAuthPage
+            ? "border-white/70 mix-blend-normal"
+            : "border-[var(--ink)] mix-blend-difference",
           isHovering && "scale-150 opacity-50",
           !isVisible && "opacity-0"
         )}
@@ -86,7 +96,8 @@ export const CustomCursor: React.FC = () => {
       {/* Inner dot */}
       <div
         className={cn(
-          "fixed top-0 left-0 w-2 h-2 rounded-full bg-[var(--ink)] pointer-events-none z-[9999] mix-blend-difference transition-all duration-200 ease-out",
+          "fixed top-0 left-0 w-2 h-2 rounded-full pointer-events-none z-[9999] transition-all duration-200 ease-out",
+          isAuthPage ? "bg-white/80 mix-blend-normal" : "bg-[var(--ink)] mix-blend-difference",
           isHovering && "scale-150",
           !isVisible && "opacity-0"
         )}
