@@ -34,18 +34,16 @@ export default function Home() {
             >
               {/* Headline */}
               <h1 className="text-4xl md:text-5xl font-serif text-[var(--ink)] leading-[1.1] mb-4 font-normal">
-                Experience rooms in 3D before you visit
+                From inspiration to identity
               </h1>
               
               {/* Setup / About copy */}
               <div className="space-y-2 mb-6 max-w-lg">
                 <p className="text-sm md:text-base text-[var(--ink)] leading-relaxed">
-                  Deja View lets you explore spaces in immersive 3D. Sign in to
-                  access your saved rooms and create new experiences.
+                  Deja View transforms products you discover on social media into 3D objects. Curate your finds, visualize them in your personal space, and shop directly through Shopify.
                 </p>
                 <p className="text-sm md:text-base text-[var(--ink)] leading-relaxed">
-                  Returning users are taken straight to their virtual home. New
-                  here? Get started below to create your account.
+                  Your room becomes your identity. Build a space that reflects who you are and what you love.
                 </p>
               </div>
               
