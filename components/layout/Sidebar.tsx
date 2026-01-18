@@ -1,10 +1,18 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import HoverPreview3D from "@/components/three/HoverPreview3D";
+
+interface Product {
+  _id: string;
+  main_item: string;
+  asset?: {
+    glbUrl?: string;
+  };
+}
 
 interface SidebarProps {
   isOpen: boolean;
@@ -24,7 +32,36 @@ const MODEL_PATHS: Record<string, string> = {
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onRoomSelect }) => {
   const router = useRouter();
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
   const dormButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Fetch products from MongoDB
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const response = await fetch("/api/items");
+        if (!response.ok) return;
+        
+        const items = await response.json();
+        // Extract products with main_item field from analysis
+        const productsList = items
+          .filter((item: any) => item.analysis?.main_item)
+          .map((item: any) => ({
+            _id: item._id,
+            main_item: item.analysis.main_item,
+            asset: item.asset,
+          }));
+        
+        setProducts(productsList);
+      } catch (error) {
+        console.error("Error fetching products:", error);
+      }
+    };
+
+    if (isOpen) {
+      fetchProducts();
+    }
+  }, [isOpen]);
 
   const handleSpacesClick = () => {
     router.push("/upload");
@@ -179,90 +216,51 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onRoomSelect 
           <div>
             <h2 className="text-3xl font-serif font-bold text-white mb-6 select-none" style={{ userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}>Products</h2>
             <ul className="space-y-4 select-none" style={{ userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}>
-              <li className="relative">
-                <button
-                  onMouseEnter={() => setHoveredItem("Orange Chair")}
-                  onMouseLeave={() => setHoveredItem(null)}
-                  className="text-base cursor-pointer bg-transparent border-0 p-0 transition-colors duration-200 hover:opacity-70 select-none"
-                  style={{
-                    color: hoveredItem === "Orange Chair" ? "#ff7c12" : "#ffffff",
-                    userSelect: 'none',
-                    WebkitUserSelect: 'none'
-                  }}
-                  data-cursor="hover"
-                >
-                  Orange Chair
-                </button>
-                {hoveredItem === "Orange Chair" && MODEL_PATHS["Orange Chair"] && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <HoverPreview3D
-                      modelPath={MODEL_PATHS["Orange Chair"]}
-                      visible={true}
-                    />
-                  </motion.div>
-                )}
-              </li>
-              <li className="relative">
-                <button
-                  onMouseEnter={() => setHoveredItem("Purple table")}
-                  onMouseLeave={() => setHoveredItem(null)}
-                  className="text-base cursor-pointer bg-transparent border-0 p-0 transition-colors duration-200 hover:opacity-70 select-none"
-                  style={{
-                    color: hoveredItem === "Purple table" ? "#ff7c12" : "#ffffff",
-                    userSelect: 'none',
-                    WebkitUserSelect: 'none'
-                  }}
-                  data-cursor="hover"
-                >
-                  Purple table
-                </button>
-                {hoveredItem === "Purple table" && MODEL_PATHS["Purple table"] && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <HoverPreview3D
-                      modelPath={MODEL_PATHS["Purple table"]}
-                      visible={true}
-                    />
-                  </motion.div>
-                )}
-              </li>
-              <li className="relative">
-                <button
-                  onMouseEnter={() => setHoveredItem("Green Terracotta Plant")}
-                  onMouseLeave={() => setHoveredItem(null)}
-                  className="text-base cursor-pointer bg-transparent border-0 p-0 transition-colors duration-200 hover:opacity-70 select-none"
-                  style={{
-                    color: hoveredItem === "Green Terracotta Plant" ? "#ff7c12" : "#ffffff",
-                    userSelect: 'none',
-                    WebkitUserSelect: 'none'
-                  }}
-                  data-cursor="hover"
-                >
-                  Green Terracotta Plant
-                </button>
-                {hoveredItem === "Green Terracotta Plant" && MODEL_PATHS["Green Terracotta Plant"] && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <HoverPreview3D
-                      modelPath={MODEL_PATHS["Green Terracotta Plant"]}
-                      visible={true}
-                    />
-                  </motion.div>
-                )}
-              </li>
+              {products.map((product) => {
+                const glbUrl = product.asset?.glbUrl;
+                if (!glbUrl) return null;
+                
+                // Proxy external URLs
+                const proxiedUrl = glbUrl.startsWith('/') 
+                  ? glbUrl 
+                  : `/api/proxy-model?url=${encodeURIComponent(glbUrl)}`;
+                
+                return (
+                  <li key={product._id} className="relative">
+                    <button
+                      onMouseEnter={() => setHoveredItem(product._id)}
+                      onMouseLeave={() => setHoveredItem(null)}
+                      className="text-base cursor-pointer bg-transparent border-0 p-0 transition-colors duration-200 hover:opacity-70 select-none"
+                      style={{
+                        color: hoveredItem === product._id ? "#ff7c12" : "#ffffff",
+                        userSelect: 'none',
+                        WebkitUserSelect: 'none'
+                      }}
+                      data-cursor="hover"
+                    >
+                      {product.main_item}
+                    </button>
+                    {hoveredItem === product._id && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <HoverPreview3D
+                          modelPath={proxiedUrl}
+                          visible={true}
+                          size={180}
+                          position={{
+                            top: "calc(50% + 100px)",
+                            left: "calc(312px + 80px)",
+                          }}
+                        />
+                      </motion.div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </div>

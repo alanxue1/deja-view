@@ -28,6 +28,7 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
   const { user } = useUser();
   const [isOpen, setOpen] = useState(false);
   const [isProfileOpen, setProfileOpen] = useState(false);
+  const [isLoadingPinterest, setIsLoadingPinterest] = useState(false);
   const profileWrapRef = useRef<HTMLDivElement | null>(null);
   const profileButtonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -40,6 +41,40 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
   const handleHomeClick = (e: React.MouseEvent) => {
     e.preventDefault();
     router.push("/");
+  };
+
+  const handlePinterestBoard = async (url: string) => {
+    if (!url || isLoadingPinterest) return;
+    
+    setIsLoadingPinterest(true);
+    try {
+      const response = await fetch("/api/pinterest-board", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ boardUrl: url }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to process Pinterest board");
+      }
+
+      const result = await response.json();
+      console.log("✅ Pinterest board processing started:", result.job_id);
+      
+      // Show success message
+      alert("Pinterest board processing started! Items will appear once processing completes.");
+      
+      // Clear input
+      const input = document.querySelector('input[placeholder*="Pinterest"]') as HTMLInputElement;
+      if (input) input.value = '';
+    } catch (error) {
+      console.error("❌ Error processing Pinterest board:", error);
+      alert("Failed to process Pinterest board. Please check the URL and try again.");
+    } finally {
+      setIsLoadingPinterest(false);
+    }
   };
 
   useEffect(() => {
@@ -118,8 +153,26 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
             <div className="pointer-events-none" style={{ width: '48px', height: '48px' }} />
 
             {/* Center: Deja View */}
-            <div className="absolute left-1/2 transform -translate-x-1/2">
-              <h1 className="text-2xl font-semibold text-white font-serif">Deja View</h1>
+            <div className="absolute left-1/2 transform -translate-x-1/2 pointer-events-auto flex flex-col items-center">
+              <h1 className="text-2xl font-semibold text-white font-serif mb-3">Deja View</h1>
+              {/* Pinterest Board Input */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder={isLoadingPinterest ? "Processing..." : "Paste Pinterest board URL..."}
+                  disabled={isLoadingPinterest}
+                  className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg px-4 py-2 text-white text-sm placeholder:text-white/60 focus:outline-none focus:ring-0 focus:border-white/30 w-72 disabled:opacity-50 text-center"
+                  style={{ boxShadow: 'none' }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !isLoadingPinterest) {
+                      const url = (e.target as HTMLInputElement).value;
+                      if (url) {
+                        handlePinterestBoard(url);
+                      }
+                    }
+                  }}
+                />
+              </div>
             </div>
 
             {/* Right: User Icon or Profile Image */}
@@ -255,14 +308,32 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
       <header className="fixed top-0 left-0 right-0 z-[60] pointer-events-none p-6">
         <div className="flex items-center justify-between max-w-full">
           <div className="pointer-events-none" style={{ width: '48px', height: '48px' }} />
-          <div className="absolute left-1/2 transform -translate-x-1/2 pointer-events-auto">
+          <div className="absolute left-1/2 transform -translate-x-1/2 pointer-events-auto flex flex-col items-center">
             <button
               onClick={handleHomeClick}
-              className="text-2xl font-semibold text-[var(--ink)] font-serif hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-0 p-0"
+              className="text-2xl font-semibold text-[var(--ink)] font-serif hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-0 p-0 mb-3"
               data-cursor="hover"
             >
               Deja View
             </button>
+            {/* Pinterest Board Input */}
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                placeholder={isLoadingPinterest ? "Processing..." : "Paste Pinterest board URL..."}
+                disabled={isLoadingPinterest}
+                className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg px-4 py-2 text-[var(--ink)] text-sm placeholder:text-[var(--ink)]/60 focus:outline-none focus:ring-0 focus:border-white/30 w-72 disabled:opacity-50 text-center"
+                style={{ boxShadow: 'none' }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !isLoadingPinterest) {
+                    const url = (e.target as HTMLInputElement).value;
+                    if (url) {
+                      handlePinterestBoard(url);
+                    }
+                  }
+                }}
+              />
+            </div>
           </div>
           <div className="pointer-events-auto">
             <SignedIn>
