@@ -15,9 +15,44 @@ export function scoreProductAgainstQuery(args: {
     if (haystack.includes(t)) hits += 1;
   }
 
-  // Mild per-token boost *only if that color appears in the result text*.
-  const colorTokens = new Set(["orange", "black", "white", "gray", "grey", "blue", "green", "red", "tan", "beige"]);
-  const colorBoost = q.reduce((acc, t) => (colorTokens.has(t) && haystack.includes(t) ? acc + 0.08 : acc), 0);
+  // Color handling: strongly prefer results that match the query color(s).
+  const colorTokens = new Set([
+    "orange",
+    "black",
+    "white",
+    "gray",
+    "grey",
+    "blue",
+    "green",
+    "red",
+    "tan",
+    "beige",
+    "brown",
+    "cream",
+    "ivory",
+    "navy",
+    "pink",
+    "purple",
+    "yellow",
+    "gold",
+    "silver",
+  ]);
+  const queryColors = q.filter((t) => colorTokens.has(t));
+  const resultColors = Array.from(colorTokens).filter((c) => haystack.includes(c));
+
+  const hasQueryColorMatch = queryColors.length === 0 ? true : queryColors.some((c) => haystack.includes(c));
+  const missingColorPenalty = queryColors.length > 0 && !hasQueryColorMatch ? 0.35 : 0;
+
+  // Penalize obvious conflicting colors (e.g. query says black, title says red).
+  const conflictingPenalty =
+    queryColors.length > 0
+      ? resultColors.some((c) => !queryColors.includes(c)) && !hasQueryColorMatch
+        ? 0.2
+        : 0
+      : 0;
+
+  // Small boost for exact color match appearances.
+  const colorBoost = queryColors.reduce((acc, c) => (haystack.includes(c) ? acc + 0.12 : acc), 0);
 
   // Penalize clearly irrelevant “content” results that happen to include the keywords.
   const badTokens = [
@@ -38,7 +73,7 @@ export function scoreProductAgainstQuery(args: {
   ];
   const penalty = badTokens.reduce((acc, t) => (haystack.includes(t) ? acc + 0.6 : acc), 0);
 
-  return Math.max(0, hits / q.length + colorBoost - penalty);
+  return Math.max(0, hits / q.length + colorBoost - penalty - missingColorPenalty - conflictingPenalty);
 }
 
 export function rankAndTrim(args: {

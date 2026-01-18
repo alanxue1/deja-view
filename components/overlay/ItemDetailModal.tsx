@@ -126,9 +126,22 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
     const min = p.priceRange?.min;
     const max = p.priceRange?.max;
     if (!min && !max) return "Price unavailable";
-    if (min && max && min === max) return `CA$${min}`;
-    if (min && max) return `CA$${min}–${max}`;
-    return `CA$${min ?? max ?? "?"}`;
+    const c = (p.currency || "").toUpperCase();
+    const symbol =
+      c === "CAD"
+        ? "CA$"
+        : c === "USD"
+          ? "$"
+          : c === "GBP"
+            ? "£"
+            : c === "EUR"
+              ? "€"
+              : c
+                ? `${c} `
+                : "$";
+    if (min && max && min === max) return `${symbol}${min}`;
+    if (min && max) return `${symbol}${min}–${max}`;
+    return `${symbol}${min ?? max ?? "?"}`;
   }, []);
 
   // Fetch matches when item changes
@@ -143,14 +156,9 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
       setCurrentIndex(0);
 
       try {
-        // Build URL with description/mainItem params for items not in database
+        // Always fetch description/main item from MongoDB (items collection) via /api/match-cache.
+        // This avoids stale/placeholder client-side descriptions and uses the source-of-truth fields.
         const params = new URLSearchParams({ itemId: item._id });
-        if (item.analysis?.description) {
-          params.set("description", item.analysis.description);
-        }
-        if (item.analysis?.main_item || item.analysis?.label) {
-          params.set("mainItem", item.analysis.main_item || item.analysis.label || "");
-        }
         
         const res = await fetch(`/api/match-cache?${params.toString()}`);
         
@@ -262,8 +270,8 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
           animate="visible"
           exit="exit"
           transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-          className="fixed right-4 top-1/2 -translate-y-1/2 z-50 w-[340px]
-                     bg-zinc-900/90 backdrop-blur-xl rounded-2xl
+          className="fixed right-4 top-[calc(50%-140px)] -translate-y-1/2 z-50 w-[340px]
+                     bg-zinc-800/80 backdrop-blur-xl rounded-2xl
                      border border-white/15 shadow-2xl shadow-black/40"
         >
           {/* Close Button */}
@@ -302,13 +310,8 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
                     onClick={() => {
                       if (item?._id) {
                         setState({ kind: "loading" });
+                        // Always fetch description/main item from MongoDB (items collection)
                         const params = new URLSearchParams({ itemId: item._id });
-                        if (item.analysis?.description) {
-                          params.set("description", item.analysis.description);
-                        }
-                        if (item.analysis?.main_item || item.analysis?.label) {
-                          params.set("mainItem", item.analysis.main_item || item.analysis.label || "");
-                        }
                         fetch(`/api/match-cache?${params.toString()}`)
                           .then((res) => res.json())
                           .then((data) =>

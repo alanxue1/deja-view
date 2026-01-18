@@ -98,12 +98,134 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   const [roomDimensions, setRoomDimensions] = useState<{ width: number; depth: number; floorY: number; scaledWidth?: number; scaledDepth?: number; scaleFactor?: number }>({ width: 4, depth: 4, floorY: -0.5315285924741149 }); // Floor Y from user measurement
   const [showDeletePopup, setShowDeletePopup] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<number | null>(null);
+  const [dbImportEnabled, setDbImportEnabled] = useState(false);
   const floorMeshRef = useRef<THREE.Mesh | null>(null);
   const floorControlsRef = useRef<TransformControls | null>(null);
   const itemShadowRef = useRef<Map<number, THREE.Mesh>>(new Map());
   const isCalibratingFloorRef = useRef(false);
   // Store database item metadata for each placed item (keyed by PlacedItem.id)
   const dbItemsMetaRef = useRef<Map<number, DatabaseItemData>>(new Map());
+  // Track which DB items we've already imported/placed (by Mongo _id) to avoid duplicates during polling.
+  const processedDbItemIdsRef = useRef<Set<string>>(new Set());
+  const isDbImportRunningRef = useRef(false);
+  // Debounce saves for transform updates (keyed by placed item id)
+  const saveTransformTimeoutsRef = useRef<Map<number, number>>(new Map());
+
+  const getOriginalGlbUrlForPlacedItem = useCallback((placedItemId: number): string | null => {
+    const meta = dbItemsMetaRef.current.get(placedItemId);
+    const url = meta?.asset?.glbUrl;
+    if (typeof url === "string" && url.length > 0) return url;
+
+    const placed = items.find((it) => it.id === placedItemId);
+    const path = placed?.modelPath;
+    if (!path) return null;
+    // If proxied, decode back to original
+    const prefix = "/api/proxy-model?url=";
+    if (path.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(path.slice(prefix.length));
+      } catch {
+        return path;
+      }
+    }
+    return path;
+  }, [items]);
+
+  const getScaleMultiplierForModel = useCallback(
+    (placedItemId: number): number => {
+      const model = itemModelsRef.current.get(placedItemId);
+      const placed = items.find((it) => it.id === placedItemId);
+      if (!model) return typeof placed?.scale === "number" ? placed.scale : 1;
+
+      const ud = model.userData as any;
+      const baseFitScale =
+        typeof ud.baseFitScale === "number" && Number.isFinite(ud.baseFitScale) && ud.baseFitScale > 1e-6
+          ? ud.baseFitScale
+          : null;
+
+      // Prefer explicit multiplier if we have it.
+      if (typeof ud.scaleMultiplier === "number" && Number.isFinite(ud.scaleMultiplier) && ud.scaleMultiplier > 0) {
+        return ud.scaleMultiplier;
+      }
+
+      // Otherwise derive multiplier from current model scale.
+      if (baseFitScale) {
+        const m = model.scale.x / baseFitScale;
+        return Number.isFinite(m) && m > 0 ? m : 1;
+      }
+
+      // Fallback: treat scale.x as a multiplier if no baseFitScale info exists.
+      return Number.isFinite(model.scale.x) && model.scale.x > 0 ? model.scale.x : 1;
+    },
+    [items]
+  );
+
+  const savePlacedItemTransform = useCallback(
+    async (placedItemId: number) => {
+      const placed = items.find((it) => it.id === placedItemId);
+      const model = itemModelsRef.current.get(placedItemId);
+      if (!placed || !model) return;
+
+      const glbUrl = getOriginalGlbUrlForPlacedItem(placedItemId);
+      const dbItemId = placed.dbItemId || null;
+      const label = (dbItemsMetaRef.current.get(placedItemId)?.analysis as any)?.label || (placed.modelPath || "Item");
+      const scaleMultiplier = getScaleMultiplierForModel(placedItemId);
+
+      if (!glbUrl && !dbItemId) {
+        console.warn("[save] Skipping save: missing glbUrl and dbItemId for item", placedItemId);
+        return;
+      }
+
+      const res = await fetch("/api/saved-data", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          glbUrl,
+          dbItemId,
+          label,
+          position: [model.position.x, model.position.y, model.position.z],
+          rotation: [model.rotation.x, model.rotation.y, model.rotation.z],
+          scale: scaleMultiplier,
+        }),
+      }).catch((e) => {
+        console.error("[save] Failed to reach /api/saved-data:", e);
+        return null;
+      });
+
+      if (!res) return;
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        console.error("[save] Failed saving transform:", res.status, text);
+        return;
+      }
+
+      // Keep in-memory state consistent with what's saved (scale multiplier in particular).
+      setItems((prev) =>
+        prev.map((it) => (it.id === placedItemId ? { ...it, scale: scaleMultiplier } : it))
+      );
+
+      console.log("[save] Saved item transform to MongoDB (saved-data)", {
+        placedItemId,
+        dbItemId,
+        glbUrl,
+        scale: scaleMultiplier,
+      });
+    },
+    [items, getOriginalGlbUrlForPlacedItem, getScaleMultiplierForModel]
+  );
+
+  const scheduleSavePlacedItemTransform = useCallback(
+    (placedItemId: number, delayMs = 350) => {
+      const existing = saveTransformTimeoutsRef.current.get(placedItemId);
+      if (existing) window.clearTimeout(existing);
+      const timeout = window.setTimeout(() => {
+        saveTransformTimeoutsRef.current.delete(placedItemId);
+        savePlacedItemTransform(placedItemId).catch(() => {});
+      }, delayMs);
+      saveTransformTimeoutsRef.current.set(placedItemId, timeout);
+    },
+    [savePlacedItemTransform]
+  );
 
   const setRoomOverlayHint = useCallback((text: string) => {
     if (typeof window === "undefined") return;
@@ -113,6 +235,18 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         detail: { text },
       })
     );
+  }, []);
+
+  // DB import gating: saved items + polling only start after user submits a Pinterest URL.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncFromStorage = () => {
+      const enabled = window.sessionStorage.getItem("dejaView:dbImportEnabled") === "1";
+      setDbImportEnabled(enabled);
+    };
+    syncFromStorage();
+    window.addEventListener("dejaView:dbImportEnabled", syncFromStorage);
+    return () => window.removeEventListener("dejaView:dbImportEnabled", syncFromStorage);
   }, []);
 
   const getSurfaceYForItem = useCallback(
@@ -573,6 +707,8 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       roomModelPath,
       (gltf) => {
         if (!isMountedRef.current) return;
+        // Guard against stale loader callbacks after room switches / teardown.
+        if (sceneRef.current !== scene) return;
         const model = gltf.scene;
         roomModelRef.current = model;
 
@@ -683,6 +819,12 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         
         // Prepare TransformControls (will be enabled after room animation)
         const floorControls = new TransformControls(scene.camera, scene.renderer.domElement);
+        // TransformControls requires the object to be in THIS scene graph.
+        if (floorMesh.parent && floorMesh.parent !== scene.scene) {
+          floorMesh.parent.remove(floorMesh);
+        }
+        if (!floorMesh.parent) scene.scene.add(floorMesh);
+        floorMesh.updateMatrixWorld(true);
         floorControls.attach(floorMesh);
         floorControls.setMode("translate");
         floorControls.setSpace("world");
@@ -974,6 +1116,9 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       loader.load(
         item.modelPath,
         (gltf) => {
+        if (!isMountedRef.current) return;
+        // Guard against stale loader callbacks after room switches / teardown.
+        if (sceneRef.current !== scene) return;
         const model = gltf.scene.clone();
 
         // Ensure placed items look good under environment lighting.
@@ -1095,6 +1240,12 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           
           // Add TransformControls for this model - attach directly to model
           const transformControls = new TransformControls(scene.camera, scene.renderer.domElement);
+          // TransformControls requires the object to be in THIS scene graph.
+          if (model.parent && model.parent !== scene.scene) {
+            model.parent.remove(model);
+          }
+          if (!model.parent) scene.scene.add(model);
+          model.updateMatrixWorld(true);
           transformControls.attach(model);
           transformControls.setMode("translate"); // Start with translate mode
           transformControls.setSpace("world");
@@ -1273,6 +1424,9 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
                         : i
                     )
                   );
+
+                  // Persist transform + scale to saved-items
+                  scheduleSavePlacedItemTransform(item.id);
                   
                   // #region agent log
                   fetch('http://127.0.0.1:7242/ingest/3e379d4a-11d8-484f-b8f7-0a98f77c7c7a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:scalePopup:apply',message:'Applied scale multiplier',data:{itemId:item.id,baseFitScale,newMultiplier,nextScale,modelScaleNow:{x:model.scale.x,y:model.scale.y,z:model.scale.z}},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
@@ -1478,6 +1632,8 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
             // Apply constraints when dragging ends
             if (!isDragging) {
               applyConstraintsAndUpdate();
+              // Persist final transform when user finishes manipulation (translate/rotate)
+              scheduleSavePlacedItemTransform(item.id);
             }
           });
           
@@ -1915,10 +2071,10 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     }
   }, [roomDimensions, items, onAddItem, captureTopDownImage, loadAndRenderItem]);
 
-  // Save an item to the saved-items collection
+  // Save an item to the saved-data collection
   const saveItemToDb = useCallback(async (item: PlacedItem, glbUrl: string, label: string, dbItemId?: string) => {
     try {
-      const response = await fetch("/api/saved-items", {
+      const response = await fetch("/api/saved-data", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1995,30 +2151,47 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     // Remove from state
     setItems(prev => prev.filter(i => i.id !== itemId));
     
+    // Remove metadata
+    dbItemsMetaRef.current.delete(itemId);
+    
     // Clear selection
     setSelectedItemId(null);
     
-    // Delete from saved-items in MongoDB
+    // Delete from saved-items and items collections in MongoDB
     if (item && item.modelPath) {
       try {
-        // Extract the original glbUrl from the proxied URL
+        // Delete from saved-items by glbUrl
         let glbUrl = item.modelPath;
         if (glbUrl.includes('/api/proxy-model?url=')) {
           glbUrl = decodeURIComponent(glbUrl.replace('/api/proxy-model?url=', ''));
         }
         
-        const response = await fetch(`/api/saved-items?glbUrl=${encodeURIComponent(glbUrl)}`, {
+        const savedItemsResponse = await fetch(`/api/saved-data?glbUrl=${encodeURIComponent(glbUrl)}`, {
           method: 'DELETE',
         });
         
-        if (response.ok) {
-          const result = await response.json();
+        if (savedItemsResponse.ok) {
+          const result = await savedItemsResponse.json();
           console.log(`💾 Deleted from saved-items: ${result.deletedCount} item(s)`);
         } else {
           console.error("❌ Failed to delete from saved-items");
         }
+
+        // Delete from items collection (MongoDB Atlas) if dbItemId exists
+        if (item.dbItemId) {
+          const itemsResponse = await fetch(`/api/items?id=${encodeURIComponent(item.dbItemId)}`, {
+            method: 'DELETE',
+          });
+          
+          if (itemsResponse.ok) {
+            const result = await itemsResponse.json();
+            console.log(`🗑️ Deleted from items collection (MongoDB Atlas): ${result.deletedCount} item(s)`);
+          } else {
+            console.error("❌ Failed to delete from items collection");
+          }
+        }
       } catch (error) {
-        console.error("❌ Error deleting from saved-items:", error);
+        console.error("❌ Error deleting from databases:", error);
       }
     }
     
@@ -2069,6 +2242,11 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       return;
     }
 
+    if (isDbImportRunningRef.current) {
+      return;
+    }
+    isDbImportRunningRef.current = true;
+
     console.log("🗄️ Loading items from MongoDB database...");
 
     try {
@@ -2078,7 +2256,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         throw new Error(`Failed to fetch items: ${response.status} ${response.statusText}`);
       }
       
-      const dbItems = await response.json();
+      const dbItems: any[] = await response.json();
       console.log(`📦 Fetched ${dbItems.length} items from database`);
 
       if (dbItems.length === 0) {
@@ -2092,13 +2270,20 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         return `/api/proxy-model?url=${encodeURIComponent(url)}`;
       };
 
-      // 2. Process each item sequentially to avoid overwhelming Gemini API
-      for (let i = 0; i < dbItems.length; i++) {
-        const dbItem = dbItems[i];
+      // Only process items we haven't already imported.
+      const newDbItems = dbItems.filter((it) => it?._id && !processedDbItemIdsRef.current.has(it._id));
+      if (newDbItems.length === 0) {
+        return;
+      }
+
+      // 2. Process at most one new item per poll cycle (keeps Gemini calls bounded)
+      for (let i = 0; i < Math.min(newDbItems.length, 1); i++) {
+        const dbItem = newDbItems[i];
         const glbUrl = dbItem.asset?.glbUrl;
         
         if (!glbUrl) {
           console.warn(`⚠️ Item ${dbItem._id} has no glbUrl, skipping...`);
+          processedDbItemIdsRef.current.add(dbItem._id);
           continue;
         }
 
@@ -2198,6 +2383,9 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           // Save to saved-items collection for future loads (include dbItemId for later metadata lookup)
           await saveItemToDb(newItem, glbUrl, label, dbItem._id);
 
+          // Mark as processed so we don't import it again on the next poll.
+          processedDbItemIdsRef.current.add(dbItem._id);
+
           // Small delay between items to let the previous one render and update existingItems
           await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -2211,6 +2399,8 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
 
     } catch (error) {
       console.error("❌ Error loading items from database:", error);
+    } finally {
+      isDbImportRunningRef.current = false;
     }
   }, [roomDimensions, items, captureTopDownImage, captureModelImage, saveItemToDb]);
 
@@ -2221,16 +2411,24 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       return false;
     }
 
-    console.log("📂 Checking for saved items...");
+    console.log("📂 Checking for saved-data...");
 
     try {
-      const response = await fetch("/api/saved-items");
+      const response = await fetch("/api/saved-data");
       if (!response.ok) {
         throw new Error(`Failed to fetch saved items: ${response.status}`);
       }
       
       const data = await response.json();
       const savedItems = data.items || [];
+
+      // Treat saved items as already-processed so polling doesn't re-run Gemini for them.
+      for (const saved of savedItems) {
+        const id = saved?.dbItemId || saved?._id;
+        if (typeof id === "string" && id.length > 0) {
+          processedDbItemIdsRef.current.add(id);
+        }
+      }
       
       // #region agent log
       fetch('http://127.0.0.1:7244/ingest/27aedacc-7706-407d-b1ae-abccf09ed163',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:loadSavedItems',message:'Fetched saved items',data:{count:savedItems.length,firstItem:savedItems[0]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H5'})}).catch(()=>{});
@@ -2307,6 +2505,8 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   // Auto-load items when room is ready - check saved items first
   const hasAutoLoadedRef = useRef(false);
   useEffect(() => {
+    if (!dbImportEnabled) return;
+
     // Only run once when room is ready (loading becomes false and room has dimensions)
     if (!loading && roomDimensions.width > 0 && sceneRef.current && !hasAutoLoadedRef.current) {
       hasAutoLoadedRef.current = true;
@@ -2339,7 +2539,25 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         }
       }, 1000);
     }
-  }, [loading, roomDimensions, loadSavedItems, loadItemsFromDatabase]);
+  }, [dbImportEnabled, loading, roomDimensions, loadSavedItems, loadItemsFromDatabase]);
+
+  // Poll MongoDB for new "ready" items and auto-place them via Gemini.
+  // This only places NEW items (deduped by Mongo _id via processedDbItemIdsRef).
+  useEffect(() => {
+    if (loading) return;
+    if (!sceneRef.current) return;
+    if (!(roomDimensions.width > 0)) return;
+    if (!dbImportEnabled) return;
+
+    const POLL_MS = 8000;
+    const interval = window.setInterval(() => {
+      // Skip while calibrating floor (avoid noisy re-placement while user is adjusting).
+      if (isCalibratingFloorRef.current) return;
+      loadItemsFromDatabase().catch(() => {});
+    }, POLL_MS);
+
+    return () => window.clearInterval(interval);
+  }, [dbImportEnabled, loading, roomDimensions.width, loadItemsFromDatabase]);
 
   // Expose addChair when ready (after room loads)
   useEffect(() => {

@@ -226,7 +226,7 @@ async function handleMatch(query: string) {
   }
 
   // Cache full match response (saves both CSE quota and normalization work).
-  const fullCacheKey = `match:v1:${q.toLowerCase()}`;
+  const fullCacheKey = `match:v2-currency:${q.toLowerCase()}`;
   const cachedResp = cacheGet<MatchResponse>(fullCacheKey);
   if (cachedResp) {
     return NextResponse.json({

@@ -110,6 +110,7 @@ async function tryFetchProductJsonLd(args: { canonicalUrl: string }) {
     credentials: "omit",
     redirect: "follow",
     cache: "no-store",
+    timeoutMs: 12000,
   });
   if (!res.ok) {
     throw new Error(`html fetch failed (${res.status})`);
@@ -139,6 +140,15 @@ async function tryFetchProductJsonLd(args: { canonicalUrl: string }) {
   throw new Error("no Product JSON-LD found");
 }
 
+function guessCurrencyFromStoreDomain(storeDomain: string): string | undefined {
+  const d = storeDomain.toLowerCase();
+  if (d.endsWith(".ca")) return "CAD";
+  if (d.endsWith(".co.uk") || d.endsWith(".uk")) return "GBP";
+  if (d.endsWith(".eu")) return "EUR";
+  // default unknown
+  return undefined;
+}
+
 export async function normalizeShopifyProduct(args: {
   sourceQuery: string;
   sourceRank: number;
@@ -159,11 +169,23 @@ export async function normalizeShopifyProduct(args: {
       ? raw.images.filter((x: any) => typeof x === "string").map(normalizeImageUrl)
       : [];
 
+    // Try to determine currency via JSON-LD (more reliable than theme Ajax).
+    let currency: string | undefined = undefined;
+    try {
+      const jsonld = await tryFetchProductJsonLd({ canonicalUrl });
+      const offers = jsonld?.offers;
+      const offersArr = Array.isArray(offers) ? offers : offers ? [offers] : [];
+      currency = typeof offersArr?.[0]?.priceCurrency === "string" ? offersArr[0].priceCurrency : undefined;
+    } catch {
+      currency = undefined;
+    }
+    currency = currency || guessCurrencyFromStoreDomain(storeDomain);
+
     return {
       id: String(raw?.id ?? `${storeDomain}:${handle}`),
       title: String(raw?.title ?? handle),
       vendor: typeof raw?.vendor === "string" ? raw.vendor : undefined,
-      currency: undefined, // Shopify Ajax product endpoint does not include currency reliably.
+      currency,
       priceRange: {
         min: formatCentsToCurrencyString(minCents),
         max: formatCentsToCurrencyString(maxCents),

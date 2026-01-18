@@ -8,6 +8,8 @@ export const runtime = "nodejs";
 
 // Cache TTL: 24 hours
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// Bump this when search-query generation changes to avoid serving stale cached matches.
+const CACHE_VERSION = "v3-color-material-currency";
 
 interface CachedMatch {
   _id?: ObjectId;
@@ -38,15 +40,16 @@ export async function GET(request: NextRequest) {
   try {
     const dbName = process.env.MONGODB_DB || "deja-view";
     const db = await getDb(dbName);
+    const cacheItemId = `${itemId}:${CACHE_VERSION}`;
     
     // Check cache first
     const cached = await db.collection<CachedMatch>("product-matches").findOne({
-      itemId,
+      itemId: cacheItemId,
       expiresAt: { $gt: new Date() }
     });
     
     if (cached) {
-      console.log(`📦 Cache hit for item ${itemId}`);
+      console.log(`📦 Cache hit for item ${itemId} (${CACHE_VERSION})`);
       return NextResponse.json({
         cached: true,
         itemId,
@@ -61,17 +64,30 @@ export async function GET(request: NextRequest) {
     
     let description = descriptionParam || "";
     let mainItem = mainItemParam || "";
+    let analysisForQuery: any = {};
     
-    // If description/mainItem not provided in params, try to fetch from database
-    if (!description && !mainItem) {
+    // If description or mainItem not provided in params, try to fetch from database
+    // (We still want the DB description even if mainItem is present from the client.)
+    if (!description || !mainItem) {
       try {
         const itemObjectId = new ObjectId(itemId);
         const item = await db.collection("items").findOne({ _id: itemObjectId });
         
         if (item) {
-          const analysis = item.analysis || {};
-          description = analysis.description || "";
-          mainItem = analysis.main_item || analysis.label || "";
+          const analysis = (item as any).analysis || {};
+          analysisForQuery = analysis;
+          // Prefer analysis.description, but fall back to legacy/top-level fields if present.
+          // Some items were stored with `description` at the root instead of under `analysis`.
+          if (!description) {
+            description =
+              analysis.description ||
+              (item as any).description ||
+              (item as any).pinterest_description ||
+              "";
+          }
+          if (!mainItem) {
+            mainItem = analysis.main_item || analysis.label || "";
+          }
         }
       } catch {
         // Invalid ObjectId format or item not found - continue with empty values
@@ -87,8 +103,16 @@ export async function GET(request: NextRequest) {
       }, { status: 400 });
     }
     
-    // Shorten description if needed
-    const searchQuery = shortenDescription(description, mainItem, 6);
+    // Improve query quality by injecting structured signals from MongoDB (colors/materials/style)
+    const colors = Array.isArray(analysisForQuery?.colors) ? analysisForQuery.colors : [];
+    const materials = Array.isArray(analysisForQuery?.materials) ? analysisForQuery.materials : [];
+    const style = typeof analysisForQuery?.style === "string" ? analysisForQuery.style : "";
+    const boostPrefix = [...colors, ...materials, style].filter((x) => typeof x === "string" && x.trim()).join(" ");
+
+    const augmentedDescription = `${boostPrefix} ${description}`.trim();
+
+    // Shorten description if needed (allow a slightly longer query for better precision)
+    const searchQuery = shortenDescription(augmentedDescription, mainItem, 10);
     console.log(`🔎 Search query for item ${itemId}: "${searchQuery}"`);
     
     // Call /api/match to get products
@@ -114,7 +138,7 @@ export async function GET(request: NextRequest) {
     // Store in cache
     const now = new Date();
     const cacheEntry: CachedMatch = {
-      itemId,
+      itemId: cacheItemId,
       searchQuery,
       products,
       createdAt: now,
@@ -122,7 +146,7 @@ export async function GET(request: NextRequest) {
     };
     
     await db.collection<CachedMatch>("product-matches").updateOne(
-      { itemId },
+      { itemId: cacheItemId },
       { $set: cacheEntry },
       { upsert: true }
     );

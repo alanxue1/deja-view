@@ -117,6 +117,75 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// PATCH - Update (or upsert) an existing saved item transform
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { savedItemId, glbUrl, dbItemId, position, rotation, scale, label } = body || {};
+
+    // Need at least one identifier to find the saved record
+    if (!savedItemId && !dbItemId && !glbUrl) {
+      return NextResponse.json(
+        { error: "One of savedItemId, dbItemId, or glbUrl is required" },
+        { status: 400 }
+      );
+    }
+
+    const update: any = {
+      updatedAt: new Date(),
+    };
+    if (position) update.position = position;
+    if (rotation) update.rotation = rotation;
+    if (typeof scale === "number") update.scale = scale;
+    if (typeof label === "string" && label.trim()) update.label = label.trim();
+    if (typeof dbItemId === "string") update.dbItemId = dbItemId;
+    if (typeof glbUrl === "string") update.glbUrl = glbUrl;
+
+    const dbName = process.env.MONGODB_DB || "deja-view";
+    const db = await getDb(dbName);
+
+    let filter: any = null;
+    if (typeof savedItemId === "string" && savedItemId) {
+      filter = { _id: new ObjectId(savedItemId) };
+    } else if (typeof dbItemId === "string" && dbItemId) {
+      filter = { dbItemId };
+    } else if (typeof glbUrl === "string" && glbUrl) {
+      filter = { glbUrl };
+    }
+
+    const result = await db.collection("saved-items").updateOne(
+      filter,
+      {
+        $set: update,
+        $setOnInsert: {
+          createdAt: new Date(),
+          // Ensure required-ish fields exist on insert
+          label: update.label || "Item",
+          dbItemId: update.dbItemId || null,
+          glbUrl: update.glbUrl || null,
+          position: update.position || [0, 0, 0],
+          rotation: update.rotation || [0, 0, 0],
+          scale: typeof update.scale === "number" ? update.scale : 1,
+        },
+      },
+      { upsert: true }
+    );
+
+    return NextResponse.json({
+      success: true,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+      upsertedId: result.upsertedId ? result.upsertedId.toString() : null,
+    });
+  } catch (error) {
+    console.error("❌ Error updating saved item:", error);
+    return NextResponse.json(
+      { error: "Failed to update saved item", details: error instanceof Error ? error.message : "Unknown error" },
+      { status: 500 }
+    );
+  }
+}
+
 // DELETE - Delete specific item by glbUrl or clear all saved items
 export async function DELETE(request: NextRequest) {
   try {

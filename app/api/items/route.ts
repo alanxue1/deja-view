@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
+import { ObjectId } from "mongodb";
 
 /**
  * GET /api/items
@@ -42,6 +43,44 @@ export async function GET() {
     console.error("[GET /api/items] Error:", error);
     return NextResponse.json(
       { error: "Failed to fetch items from database" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * DELETE /api/items?id=<item_id>
+ * 
+ * Deletes an item from the items collection in MongoDB Atlas by _id
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const itemId = request.nextUrl.searchParams.get("id");
+    
+    if (!itemId) {
+      return NextResponse.json(
+        { error: "Item id is required" },
+        { status: 400 }
+      );
+    }
+
+    const dbName = process.env.MONGODB_DB || "deja-view";
+    const db = await getDb(dbName);
+    
+    const result = await db.collection("items").deleteOne({ 
+      _id: new ObjectId(itemId) 
+    });
+    
+    console.log(`🗑️ Deleted item from items collection (MongoDB Atlas): ${itemId}, deleted: ${result.deletedCount}`);
+    
+    return NextResponse.json({
+      success: true,
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error("❌ Error deleting item from MongoDB Atlas:", error);
+    return NextResponse.json(
+      { error: "Failed to delete item", details: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }
     );
   }

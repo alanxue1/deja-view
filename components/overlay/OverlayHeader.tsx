@@ -46,6 +46,15 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
   const handlePinterestBoard = async (url: string) => {
     if (!url || isLoadingPinterest) return;
     
+    // As soon as the user submits a Pinterest URL, enable DB import for this session.
+    // This makes saved items appear immediately even while the Pinterest pipeline runs.
+    try {
+      window.sessionStorage.setItem("dejaView:dbImportEnabled", "1");
+      window.dispatchEvent(new Event("dejaView:dbImportEnabled"));
+    } catch {
+      // ignore
+    }
+
     setIsLoadingPinterest(true);
     try {
       const response = await fetch("/api/pinterest-board", {
@@ -57,22 +66,21 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
       });
 
       if (!response.ok) {
-        throw new Error("Failed to process Pinterest board");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to process Pinterest board");
       }
 
       const result = await response.json();
-      console.log("✅ Pinterest board processing started:", result.job_id);
-      
-      // Show success message
-      alert("Pinterest board processing started! Items will appear once processing completes.");
-      
+      console.log("✅ Pinterest board processed:", result);
+
       // Clear input
       const input = document.querySelector('input[placeholder*="Pinterest"]') as HTMLInputElement;
       if (input) input.value = '';
+
+      // Reload the page to show new items
+      window.location.reload();
     } catch (error) {
       console.error("❌ Error processing Pinterest board:", error);
-      alert("Failed to process Pinterest board. Please check the URL and try again.");
-    } finally {
       setIsLoadingPinterest(false);
     }
   };
@@ -153,7 +161,8 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
             <div className="pointer-events-none" style={{ width: '48px', height: '48px' }} />
 
             {/* Center: Deja View */}
-            <div className="absolute left-1/2 transform -translate-x-1/2 pointer-events-auto flex flex-col items-center">
+            {/* Avoid transform-based centering (can cause subpixel/ghosted text rendering) */}
+            <div className="absolute inset-x-0 pointer-events-auto flex flex-col items-center">
               <h1 className="text-2xl font-semibold text-white font-serif mb-3">Deja View</h1>
               {/* Pinterest Board Input */}
               <div className="flex items-center gap-2">
@@ -308,7 +317,8 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
       <header className="fixed top-0 left-0 right-0 z-[60] pointer-events-none p-6">
         <div className="flex items-center justify-between max-w-full">
           <div className="pointer-events-none" style={{ width: '48px', height: '48px' }} />
-          <div className="absolute left-1/2 transform -translate-x-1/2 pointer-events-auto flex flex-col items-center">
+          {/* Avoid transform-based centering (can cause subpixel/ghosted text rendering) */}
+          <div className="absolute inset-x-0 pointer-events-auto flex flex-col items-center">
             <button
               onClick={handleHomeClick}
               className="text-2xl font-semibold text-[var(--ink)] font-serif hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-0 p-0 mb-3"
