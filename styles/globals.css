@@ -133,3 +133,12 @@
     rgba(255, 255, 255, 0.1)
   );
 }
+
+/* Global canvas rounding (e.g. Three.js renderer canvas) */
+canvas {
+  border-radius: 45px;
+  border-top-left-radius: 45px;
+  border-top-right-radius: 45px;
+  border-bottom-right-radius: 45px;
+  border-bottom-left-radius: 45px;
+}
