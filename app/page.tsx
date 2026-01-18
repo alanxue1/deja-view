@@ -24,7 +24,7 @@ export default function Home() {
               animate="visible"
               variants={fadeInUp}
               transition={defaultTransition}
-              className="col-span-12 md:col-span-6 flex flex-col justify-center"
+              className="col-span-12 md:col-span-5 lg:col-span-4 flex flex-col justify-center"
             >
               {/* Headline */}
               <h1 className="text-4xl md:text-5xl font-serif text-[var(--ink)] leading-[1.1] mb-4 font-normal">
@@ -55,7 +55,7 @@ export default function Home() {
               animate="visible"
               variants={fadeInUp}
               transition={{ ...defaultTransition, delay: 0.2 }}
-              className="col-span-12 md:col-span-6 flex items-center"
+              className="col-span-12 md:col-span-7 lg:col-span-8 flex items-center"
             >
               <RoomPreview />
             </MotionDiv>
