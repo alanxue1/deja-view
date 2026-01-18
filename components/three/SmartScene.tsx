@@ -1,0 +1,1612 @@
+"use client";
+
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
+import { initThree, cleanupThree, type ThreeScene } from "@/lib/three/init";
+import { createOrbitControls, type OrbitControls } from "@/lib/three/controls";
+import { setupResize } from "@/lib/three/resize";
+import { cn } from "@/lib/cn";
+
+interface PlacedItem {
+  id: number;
+  modelPath: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  // Multiplier applied on top of the base-fit scale computed in `loadAndRenderItem`
+  scale?: number;
+}
+
+interface SmartSceneProps {
+  className?: string;
+  roomModelPath?: string;
+  onAddItem?: (item: PlacedItem) => void;
+  onReady?: (addChair: () => Promise<void>) => void; // Callback to expose addChair function
+}
+
+type RoomOverlayHintEventDetail = { text: string };
+const ROOM_OVERLAY_HINT_EVENT = "room-overlay-hint";
+const ROOM_OVERLAY_HINT_DEFAULT = "Drag to Explore";
+const ROOM_OVERLAY_HINT_CONTROL = "Drag to Control";
+const ROOM_OVERLAY_HINT_CALIBRATION =
+  "Move the green floor plane to match the room floor, then press Enter to save";
+
+function isTableLikeModelPath(modelPath: string): boolean {
+  const tokenized = modelPath.toLowerCase().replace(/[^a-z]/g, " ");
+  // Important: word-boundary matching so "desktop" does NOT count as "desk".
+  return /\b(table|desk)\b/.test(tokenized);
+}
+
+export const SmartScene: React.FC<SmartSceneProps> = ({
+  className,
+  roomModelPath = "/Perfect-empty-room - manual lidar.glb",
+  onAddItem,
+  onReady,
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<ThreeScene | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const roomModelRef = useRef<THREE.Group | null>(null);
+  const itemModelsRef = useRef<Map<number, THREE.Group>>(new Map());
+  const transformControlsRef = useRef<Map<number, TransformControls>>(new Map());
+  const isMountedRef = useRef(true);
+  
+  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<PlacedItem[]>([]);
+  const [roomDimensions, setRoomDimensions] = useState<{ width: number; depth: number; floorY: number; scaledWidth?: number; scaledDepth?: number; scaleFactor?: number }>({ width: 4, depth: 4, floorY: -0.5315285924741149 }); // Floor Y from user measurement
+  const floorMeshRef = useRef<THREE.Mesh | null>(null);
+  const floorControlsRef = useRef<TransformControls | null>(null);
+  const itemShadowRef = useRef<Map<number, THREE.Mesh>>(new Map());
+  const isCalibratingFloorRef = useRef(false);
+
+  const setRoomOverlayHint = useCallback((text: string) => {
+    if (typeof window === "undefined") return;
+    (window as any).__roomOverlayHint = text;
+    window.dispatchEvent(
+      new CustomEvent<RoomOverlayHintEventDetail>(ROOM_OVERLAY_HINT_EVENT, {
+        detail: { text },
+      })
+    );
+  }, []);
+
+  const getSurfaceYForItem = useCallback(
+    (item: PlacedItem): number => {
+      const label = item.modelPath?.toLowerCase() || "";
+      const isPlant = label.includes("plant");
+      const hasTable = items.some((i) => i.modelPath && isTableLikeModelPath(i.modelPath));
+      const currentFloorY = roomDimensions.floorY || -0.5315285924741149;
+      const tableHeight = 0.75;
+      return isPlant && hasTable ? currentFloorY + tableHeight : currentFloorY;
+    },
+    [items, roomDimensions.floorY]
+  );
+
+  const applyPbrLightingTuning = useCallback((root: THREE.Object3D, envMapIntensity = 0.35) => {
+    root.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const mat of materials) {
+        if (!mat) continue;
+        // Most glTF assets use MeshStandard/Physical materials; boost env reflections slightly for realism.
+        if (mat instanceof THREE.MeshStandardMaterial) {
+          mat.envMapIntensity = envMapIntensity;
+          mat.needsUpdate = true;
+        }
+      }
+    });
+  }, []);
+
+  // Press Enter to "commit" the green calibration floor (if present).
+  // Use capture phase so it still triggers even if something stops propagation later.
+  useEffect(() => {
+    const onKeyDownCapture = (event: KeyboardEvent) => {
+      const isEnter =
+        event.key === "Enter" || event.code === "Enter" || event.code === "NumpadEnter";
+      if (!isEnter) return;
+      if (!sceneRef.current) return;
+
+      // Prefer refs, but fall back to looking up by name in case refs got out of sync.
+      const mesh =
+        floorMeshRef.current ??
+        (sceneRef.current.scene.getObjectByName("calibration-floor") as THREE.Mesh | null);
+      if (!mesh) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const finalFloorY = mesh.position.y;
+      console.log("✅ Saving floor Y:", finalFloorY);
+
+      setRoomDimensions((prev) => ({
+        ...prev,
+        floorY: finalFloorY,
+      }));
+
+      // Remove green floor mesh and controls
+      const scene = sceneRef.current.scene;
+
+      // Detach and remove controls first (if attached to mesh, detach before removing mesh)
+      const refControls = floorControlsRef.current;
+      if (refControls) {
+        refControls.detach();
+        scene.remove(refControls);
+        refControls.dispose();
+        floorControlsRef.current = null;
+      }
+
+      // Remove/dispose mesh
+      const refMesh = floorMeshRef.current;
+      const meshToRemove = refMesh ?? mesh;
+      if (meshToRemove && meshToRemove.parent) {
+        scene.remove(meshToRemove);
+        meshToRemove.geometry?.dispose?.();
+        const mat = meshToRemove.material as any;
+        if (Array.isArray(mat)) mat.forEach((m) => m?.dispose?.());
+        else mat?.dispose?.();
+      }
+      floorMeshRef.current = null;
+
+      isCalibratingFloorRef.current = false;
+      setRoomOverlayHint(ROOM_OVERLAY_HINT_CONTROL);
+
+      console.log("🏠 Floor Y saved and green floor removed. Floor Y:", finalFloorY);
+    };
+
+    // Use window capture for maximum reliability.
+    window.addEventListener("keydown", onKeyDownCapture, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDownCapture, { capture: true } as any);
+  }, [setRoomOverlayHint]);
+
+  const ensureItemContactShadow = useCallback(
+    (
+      item: PlacedItem,
+      model: THREE.Object3D,
+      opts?: {
+        radius?: number;
+        opacity?: number;
+        footprintXZ?: { x: number; z: number };
+        footprintScale?: number; // scale value used when footprintXZ was measured
+        scaleOverride?: number; // optional current scale override
+      }
+    ) => {
+      if (!sceneRef.current) return;
+      const scene = sceneRef.current.scene;
+
+      // Keep the shadow at the same Y level as the floor calibration plane (green plane),
+      // so it never "floats up" with the object.
+      const floorY =
+        floorMeshRef.current?.position.y ??
+        roomDimensions.floorY ??
+        -0.5315285924741149;
+      const shadowY = floorY + 0.01; // slight lift (as requested)
+
+      const currentScale =
+        typeof opts?.scaleOverride === "number" && Number.isFinite(opts.scaleOverride)
+          ? opts.scaleOverride
+          : model.scale.x;
+
+      // Compute a stable radius that scales with the object.
+      // We store a per-scale-unit base value once to avoid jitter from inconsistent inputs.
+      const ud = model.userData as any;
+      let baseRadiusPerScaleUnit =
+        typeof ud.shadowRadiusPerScaleUnit === "number" && Number.isFinite(ud.shadowRadiusPerScaleUnit)
+          ? ud.shadowRadiusPerScaleUnit
+          : undefined;
+
+      // If caller provided an explicit radius, treat it as the current radius.
+      if (typeof opts?.radius === "number" && Number.isFinite(opts.radius) && opts.radius > 0) {
+        if (currentScale > 1e-6) {
+          baseRadiusPerScaleUnit = opts.radius / currentScale;
+          ud.shadowRadiusPerScaleUnit = baseRadiusPerScaleUnit;
+        }
+      }
+
+      if (baseRadiusPerScaleUnit === undefined) {
+        // Derive radius at the scale the footprint was measured, then convert to per-scale-unit.
+        const footprintScale =
+          typeof opts?.footprintScale === "number" && Number.isFinite(opts.footprintScale) && opts.footprintScale > 0
+            ? opts.footprintScale
+            : undefined;
+
+        let radiusAtKnownScale: number | undefined;
+        let knownScale: number | undefined;
+
+        if (opts?.footprintXZ && footprintScale) {
+          const maxFootprint = Math.max(opts.footprintXZ.x, opts.footprintXZ.z);
+          radiusAtKnownScale = Math.max(0.08, maxFootprint * 0.5);
+          knownScale = footprintScale;
+        } else if (currentScale > 1e-6) {
+          // Fallback: derive from current bbox (measured at currentScale)
+          const bbox = new THREE.Box3().setFromObject(model);
+          const sz = bbox.getSize(new THREE.Vector3());
+          const maxFootprint = Math.max(sz.x, sz.z);
+          radiusAtKnownScale = Math.max(0.08, maxFootprint * 0.5);
+          knownScale = currentScale;
+        }
+
+        if (radiusAtKnownScale !== undefined && knownScale !== undefined && knownScale > 1e-6) {
+          baseRadiusPerScaleUnit = radiusAtKnownScale / knownScale;
+          ud.shadowRadiusPerScaleUnit = baseRadiusPerScaleUnit;
+        } else {
+          baseRadiusPerScaleUnit = 0;
+          ud.shadowRadiusPerScaleUnit = baseRadiusPerScaleUnit;
+        }
+      }
+
+      const radius = Math.max(0, baseRadiusPerScaleUnit * currentScale);
+      const targetOpacity = Math.max(0, Math.min(0.9, opts?.opacity ?? 0.65));
+
+      let shadowMesh = itemShadowRef.current.get(item.id);
+      if (!shadowMesh) {
+        const shadowMat = new THREE.MeshBasicMaterial({
+          color: 0x000000,
+          transparent: true,
+          opacity: targetOpacity,
+          depthWrite: false, // don't write to depth buffer to avoid z-fighting with floor
+          depthTest: true, // respect depth buffer so shadow is occluded by model
+          side: THREE.DoubleSide,
+        });
+        // Keep Y exact but still render above the floor without z-fighting.
+        shadowMat.polygonOffset = true;
+        shadowMat.polygonOffsetFactor = -4;
+        shadowMat.polygonOffsetUnits = -4;
+        // Use a unit circle and scale it, so resizing never rebuilds geometry (prevents jitter).
+        shadowMesh = new THREE.Mesh(new THREE.CircleGeometry(1, 64), shadowMat);
+        shadowMesh.name = `item-shadow-${item.id}`;
+        shadowMesh.rotation.x = -Math.PI / 2;
+        shadowMesh.renderOrder = 1;
+        scene.add(shadowMesh);
+        itemShadowRef.current.set(item.id, shadowMesh);
+      } else {
+        // Update opacity (radius is handled via mesh scale below)
+        const mat = shadowMesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = targetOpacity;
+        mat.color.setHex(0x000000);
+      }
+
+      shadowMesh.scale.set(radius, radius, 1);
+      shadowMesh.position.set(model.position.x, shadowY, model.position.z);
+    },
+    [roomDimensions.floorY]
+  );
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const container = containerRef.current;
+    isMountedRef.current = true;
+
+    // Initialize Three.js
+    const scene = initThree(container);
+    sceneRef.current = scene;
+    // Reset hint on mount to avoid stale state from prior sessions.
+    isCalibratingFloorRef.current = false;
+    setRoomOverlayHint(ROOM_OVERLAY_HINT_DEFAULT);
+
+    // Setup controls first
+    const controls = createOrbitControls(scene.camera, container);
+    controlsRef.current = controls;
+
+    // Load room GLB model
+    const loader = new GLTFLoader();
+    
+    loader.load(
+      roomModelPath,
+      (gltf) => {
+        if (!isMountedRef.current) return;
+        const model = gltf.scene;
+        roomModelRef.current = model;
+
+        // Ensure PBR materials benefit from the scene environment lighting.
+        applyPbrLightingTuning(model, 0.22);
+        
+        // Calculate bounding box to get room dimensions
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        
+        // Helper function to find the floor Y position more accurately
+        // This finds the lowest Y position of all meshes in the room model
+        const getFloorY = (model: THREE.Group): number => {
+          let lowestY = Infinity;
+          
+          model.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              // Get bounding box of this mesh
+              const meshBox = new THREE.Box3().setFromObject(child);
+              if (meshBox.min.y < lowestY) {
+                lowestY = meshBox.min.y;
+              }
+            }
+          });
+          
+          // If we couldn't find a floor, use the overall bounding box minimum
+          return lowestY === Infinity ? box.min.y : lowestY;
+        };
+        
+        const floorY = getFloorY(model);
+        console.log("🏠 Floor Y detected:", floorY, "(from bounding box min:", box.min.y + ")");
+        
+        // Store room dimensions and floor height for coordinate conversion
+        setRoomDimensions({ width: size.x, depth: size.z, floorY: floorY });
+        
+        // Center the model
+        model.position.x = -center.x;
+        model.position.y = -center.y;
+        model.position.z = -center.z;
+        
+        // Scale to fit - keep original scale (4 units) for visual consistency
+        // For room dimensions sent to Gemini, use the ORIGINAL unscaled dimensions
+        // This ensures Gemini gets realistic dimensions (e.g., actual room size in meters)
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const finalScale = 4 / maxDim; // Keep visual scale at 4 units
+        
+        // Store the scale factor for coordinate conversion
+        // Calibrate floor Y after centering and scaling
+        // The floor is the lowest Y point after transformation
+        // After centering: floorY = originalFloorY - centerY
+        // After scaling: floorY = (originalFloorY - centerY) * finalScale
+        const calibratedFloorY = (floorY - center.y) * finalScale;
+        // Note: item shadows are spawned per-item (no global shadow floor).
+        
+        // IMPORTANT: Use ORIGINAL unscaled dimensions for Gemini API
+        // The room model likely has real-world dimensions (e.g., in meters)
+        // We scale for visual display, but Gemini needs the actual room size for placement
+        // Scaled dimensions would be tiny (e.g., 0.4m x 0.4m) but real rooms are 4-6m x 4-6m
+        const scaledWidth = size.x * finalScale;
+        const scaledDepth = size.z * finalScale;
+        
+        // Store LARGE fixed dimensions for Gemini - ignore actual model dimensions
+        // Use realistic room sizes (6 meters) regardless of what the model dimensions are
+        const REALISTIC_ROOM_WIDTH = 6.0;  // Always use 6 meters width for Gemini (realistic room size)
+        const REALISTIC_ROOM_DEPTH = 6.0;  // Always use 6 meters depth for Gemini (realistic room size)
+        
+        // Store BOTH: large fixed dimensions for Gemini (6m x 6m), and scaled dimensions for coordinates
+        const roomDimensionsData = {
+          width: REALISTIC_ROOM_WIDTH,  // Fixed 6 meters width for Gemini (realistic room size)
+          depth: REALISTIC_ROOM_DEPTH,  // Fixed 6 meters depth for Gemini (realistic room size)
+          scaledWidth: scaledWidth,  // Scaled width (for coordinate conversion in scene)
+          scaledDepth: scaledDepth,  // Scaled depth (for coordinate conversion in scene)
+          scaleFactor: finalScale,   // Scale factor for converting Gemini coords
+          floorY: calibratedFloorY,
+        };
+        setRoomDimensions(roomDimensionsData);
+        console.log("📐 Room dimensions - For Gemini (FIXED):", { width: REALISTIC_ROOM_WIDTH, depth: REALISTIC_ROOM_DEPTH }, "Scaled (scene):", { width: scaledWidth, depth: scaledDepth }, "Original model:", { width: size.x, depth: size.z });
+        console.log("📐 Calibrated floor Y:", calibratedFloorY, "from room model (original:", floorY + ", center:", center.y + ", scale:", finalScale + ")");
+        
+        // Create a green floor mesh to visualize the automatically detected floor Y
+        const floorGeometry = new THREE.PlaneGeometry(10, 10);
+        const floorMaterial = new THREE.MeshBasicMaterial({ 
+          color: 0x00ff00, 
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.5 // Increased opacity so it's more visible
+        });
+        const floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
+        floorMesh.rotation.x = Math.PI / 2; // Rotate to be horizontal
+        floorMesh.position.y = calibratedFloorY; // Use automatically detected floor Y
+        floorMesh.position.x = 0;
+        floorMesh.position.z = 0;
+        floorMesh.name = "calibration-floor";
+        scene.scene.add(floorMesh);
+        floorMeshRef.current = floorMesh;
+        
+        // Add TransformControls to floor mesh so user can verify/adjust it
+        const floorControls = new TransformControls(scene.camera, scene.renderer.domElement);
+        floorControls.attach(floorMesh);
+        floorControls.setMode("translate");
+        floorControls.setSpace("world");
+        floorControls.enabled = true;
+        floorControls.size = 0.8;
+        scene.scene.add(floorControls);
+        floorControlsRef.current = floorControls;
+
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/3e379d4a-11d8-484f-b8f7-0a98f77c7c7a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:floorCalib:create',message:'Created floor calibration mesh + controls',data:{floorY:calibratedFloorY,meshUUID:floorMesh.uuid,controlsUUID:(floorControls as any).uuid,hasControls:!!floorControlsRef.current,hasMesh:!!floorMeshRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'floor-pre',hypothesisId:'E'})}).catch(()=>{});
+        // #endregion
+        
+        // Disable camera controls when dragging floor mesh
+        floorControls.addEventListener("dragging-changed", (event: any) => {
+          const isDragging = event.value as boolean;
+          if (controlsRef.current) {
+            controlsRef.current.setEnabled(!isDragging);
+          }
+        });
+        
+        // Log Y position when floor is moved
+        floorControls.addEventListener("change", () => {
+          const floorY = floorMesh.position.y;
+          console.log("📍 Floor Y position:", floorY);
+          console.log("   Floor position (x, y, z):", floorMesh.position.x, floorY, floorMesh.position.z);
+        });
+
+        // Update footer hint (React-driven via OverlayFooter listener)
+        setRoomOverlayHint(ROOM_OVERLAY_HINT_CALIBRATION);
+        isCalibratingFloorRef.current = true;
+
+        console.log("🏠 Green floor mesh created at automatically detected Y:", calibratedFloorY, "- Press Enter to save and remove");
+        
+        // Start with model invisible/scaled down for animation
+        model.scale.set(0, 0, 0);
+        
+        // Set opacity to 0 for fade-in animation
+        model.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            if (Array.isArray(child.material)) {
+              child.material.forEach((mat: THREE.Material) => {
+                // Store original render settings so we can restore after fade-in.
+                (mat.userData as any).__origTransparent ??= mat.transparent;
+                (mat.userData as any).__origOpacity ??= mat.opacity;
+                (mat.userData as any).__origSide ??= (mat as any).side;
+                mat.transparent = true;
+                mat.opacity = 0;
+              });
+            } else if (child.material) {
+              const mat = child.material as THREE.Material;
+              (mat.userData as any).__origTransparent ??= mat.transparent;
+              (mat.userData as any).__origOpacity ??= mat.opacity;
+              (mat.userData as any).__origSide ??= (mat as any).side;
+              child.material.transparent = true;
+              child.material.opacity = 0;
+            }
+          }
+        });
+        
+        scene.scene.add(model);
+        
+        // Disable raycasting on room model so we can click through it
+        model.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.raycast = () => {}; // Disable raycasting - allows clicking through room
+          }
+        });
+        
+        // Animate model appearance
+        const duration = 2500; // 2.5 seconds
+        const startTime = Date.now();
+        
+        const animateAppearance = () => {
+          const elapsed = Date.now() - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+          
+          // Easing function (ease out cubic)
+          const eased = 1 - Math.pow(1 - progress, 3);
+          
+          // Animate scale
+          const currentScale = eased * finalScale;
+          model.scale.set(currentScale, currentScale, currentScale);
+          
+          // Animate opacity
+          const opacity = eased;
+          model.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              if (Array.isArray(child.material)) {
+                child.material.forEach((mat: THREE.Material) => {
+                  mat.opacity = opacity;
+                });
+              } else if (child.material) {
+                child.material.opacity = opacity;
+              }
+            }
+          });
+          
+          if (progress < 1) {
+            requestAnimationFrame(animateAppearance);
+          } else {
+            // Animation complete - ensure final scale is set
+            model.scale.set(finalScale, finalScale, finalScale);
+
+            // Restore original material settings (we only made them transparent for the fade-in)
+            // and make likely-floor surfaces visible from below (DoubleSide).
+            model.traverse((child) => {
+              if (!(child instanceof THREE.Mesh)) return;
+              const materials = Array.isArray(child.material) ? child.material : [child.material];
+              for (const mat of materials) {
+                if (!mat) continue;
+                const ud = mat.userData as any;
+                if (typeof ud.__origOpacity === "number") mat.opacity = ud.__origOpacity;
+                if (typeof ud.__origTransparent === "boolean") mat.transparent = ud.__origTransparent;
+                // Heuristic: thin meshes near the calibrated floor are treated as "floor" and made double-sided.
+                try {
+                  const box = new THREE.Box3().setFromObject(child);
+                  const height = box.max.y - box.min.y;
+                  const centerY = (box.max.y + box.min.y) / 2;
+                  const nearFloor = Math.abs(centerY - calibratedFloorY) < 0.15 || Math.abs(box.min.y - calibratedFloorY) < 0.08;
+                  const isThin = height < 0.08;
+                  if (nearFloor && isThin) {
+                    (mat as any).side = THREE.DoubleSide;
+                  }
+                } catch {
+                  // ignore bbox errors
+                }
+                mat.needsUpdate = true;
+              }
+            });
+            
+            // Recalculate room dimensions after animation completes to verify scale
+            // The model is now at final scale, so recalculate bounding box in world space
+            model.updateMatrixWorld(true); // Force update world matrix
+            const finalBox = new THREE.Box3().setFromObject(model);
+            const finalSize = finalBox.getSize(new THREE.Vector3());
+            
+            // Update room dimensions with actual final dimensions
+            setRoomDimensions({
+              width: finalSize.x,
+              depth: finalSize.z,
+              floorY: calibratedFloorY,
+            });
+            
+            console.log("✅ Animation complete - Final room dimensions:", { width: finalSize.x, depth: finalSize.z });
+            
+            setLoading(false);
+          }
+        };
+        
+        // Adjust camera position based on model size
+        const distance = Math.max(size.x, size.y, size.z) * 0.6 * finalScale;
+        scene.camera.position.set(distance, distance * 0.5, distance);
+        scene.camera.lookAt(0, 0, 0);
+        
+        // Update controls spherical to match new camera position
+        controls.spherical.setFromVector3(scene.camera.position);
+        controls.spherical.radius = distance;
+        
+        // Set zoom limits
+        controls.minRadius = distance * 0.3;
+        controls.maxRadius = distance * 1.2;
+        
+        animateAppearance();
+      },
+      (progress) => {
+        if (progress.lengthComputable) {
+          const percentComplete = (progress.loaded / progress.total) * 100;
+          console.log("Loading progress:", percentComplete.toFixed(2) + "%");
+        }
+      },
+      (error) => {
+        console.error("Error loading model:", error);
+        setLoading(false);
+      }
+    );
+
+    // Setup resize
+    const resizeCleanup = setupResize(scene, container);
+    resizeCleanupRef.current = resizeCleanup;
+
+    // Animation loop
+    const animate = () => {
+      if (controlsRef.current) {
+        controlsRef.current.update();
+      }
+      // Update scene (TransformControls update automatically)
+      if (sceneRef.current) {
+        sceneRef.current.renderer.render(sceneRef.current.scene, sceneRef.current.camera);
+      }
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+    animate();
+    
+    // Make room model not intercept raycasts (so we can click through it)
+    if (roomModelRef.current) {
+      roomModelRef.current.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.raycast = () => {}; // Disable raycasting on room model
+        }
+      });
+    }
+
+    // Cleanup
+    return () => {
+      isMountedRef.current = false;
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      // Reset footer hint on unmount.
+      setRoomOverlayHint(ROOM_OVERLAY_HINT_DEFAULT);
+      // Cleanup per-item contact shadows
+      if (sceneRef.current) {
+        itemShadowRef.current.forEach((mesh) => {
+          sceneRef.current?.scene.remove(mesh);
+          mesh.geometry.dispose();
+          (mesh.material as THREE.Material).dispose();
+        });
+      }
+      itemShadowRef.current.clear();
+      // Cleanup TransformControls
+      transformControlsRef.current.forEach((controls) => {
+        controls.dispose();
+      });
+      transformControlsRef.current.clear();
+      if (controlsRef.current) {
+        controlsRef.current.dispose();
+      }
+      if (resizeCleanupRef.current) {
+        resizeCleanupRef.current();
+      }
+      if (sceneRef.current) {
+        cleanupThree(sceneRef.current);
+        sceneRef.current = null;
+      }
+    };
+  }, [roomModelPath, applyPbrLightingTuning, setRoomOverlayHint]);
+
+  // Load and render a single item
+  const loadAndRenderItem = useCallback(async (item: PlacedItem): Promise<void> => {
+    if (!sceneRef.current) return;
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/3e379d4a-11d8-484f-b8f7-0a98f77c7c7a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:loadAndRenderItem:entry',message:'loadAndRenderItem entry',data:{itemId:item.id,modelPath:item.modelPath,position:item.position,rotation:item.rotation,hasScaleProp:(item as any).scale},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+
+    // If already loaded, ensure it has a contact shadow (no duplicates).
+    if (itemModelsRef.current.has(item.id)) {
+      const existingModel = itemModelsRef.current.get(item.id);
+      if (existingModel && !itemShadowRef.current.has(item.id)) {
+        ensureItemContactShadow(item, existingModel, { opacity: 0.36 });
+      }
+      console.log(`⚠️ Item ${item.id} already loaded, skipping...`);
+      return;
+    }
+    
+    // Mark as loading to prevent duplicate loads
+    itemModelsRef.current.set(item.id, null as any); // Temporary marker
+
+    const scene = sceneRef.current;
+    const loader = new GLTFLoader();
+
+    return new Promise((resolve, reject) => {
+      loader.load(
+        item.modelPath,
+        (gltf) => {
+        const model = gltf.scene.clone();
+
+        // Ensure placed items look good under environment lighting.
+        applyPbrLightingTuning(model, 0.4);
+        // Set X, Z, and rotation from item - Y will be recalculated below
+        model.position.x = item.position[0];
+        model.position.z = item.position[2];
+        model.rotation.set(...item.rotation);
+        
+        // Scale to match room scale (adjust as needed)
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const baseFitScale = 0.5 / maxDim; // base-fit size
+        const requestedMultiplier = typeof item.scale === "number" && Number.isFinite(item.scale) ? item.scale : 1;
+        const finalItemScale = baseFitScale * requestedMultiplier;
+
+        // Persist scales for later (e.g. scale popup)
+        (model.userData as any).baseFitScale = baseFitScale;
+        (model.userData as any).scaleMultiplier = requestedMultiplier;
+
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/3e379d4a-11d8-484f-b8f7-0a98f77c7c7a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:loadAndRenderItem:scaleCalc',message:'Computed baseFitScale + multiplier',data:{itemId:item.id,size:{x:size.x,y:size.y,z:size.z},maxDim,baseFitScale,requestedMultiplier,finalItemScale,modelScaleBefore:{x:model.scale.x,y:model.scale.y,z:model.scale.z}},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+
+        model.scale.set(finalItemScale, finalItemScale, finalItemScale);
+        
+        // Recalculate bounding box after scaling to get accurate bottom offset and extents
+        // First, temporarily reset position to calculate local bounding box
+        const tempPosition = model.position.clone();
+        model.position.set(0, 0, 0);
+        const localBox = new THREE.Box3().setFromObject(model);
+        model.position.copy(tempPosition);
+        
+        // bottomOffset is the distance from pivot to bottom (negative if bottom is below pivot)
+        const bottomOffset = localBox.min.y;
+        const itemExtentX = localBox.max.x - localBox.min.x; // Item width in local space
+        const itemExtentZ = localBox.max.z - localBox.min.z; // Item depth in local space
+        const itemHalfWidth = itemExtentX / 2; // Half width for bounds checking
+        const itemHalfDepth = itemExtentZ / 2; // Half depth for bounds checking
+
+        // Persist footprint for contact shadow updates while dragging.
+        (model.userData as any).footprintXZ = { x: itemExtentX, z: itemExtentZ };
+        // Cache a stable radius-per-scale unit so shadow scales smoothly without jitter.
+        {
+          const maxFootprint = Math.max(itemExtentX, itemExtentZ);
+          const radiusAtFinalScale = Math.max(0.08, maxFootprint * 0.5);
+          (model.userData as any).shadowRadiusPerScaleUnit = radiusAtFinalScale / finalItemScale;
+        }
+        
+        // Adjust initial Y position based on floor Y and bottom offset
+        // bottomOffset is negative (e.g., -0.5 means bottom is 0.5 units below pivot)
+        // So: pivotY + bottomOffset = bottomY
+        // We want: bottomY = floorY (or slightly above for plants on tables)
+        // Therefore: pivotY = floorY - bottomOffset
+        
+        // Check if this is a plant that should go on a table
+        const label = item.modelPath?.toLowerCase() || "";
+        const isPlant = label.includes('plant');
+        const hasTable = items.some((i) => i.modelPath && isTableLikeModelPath(i.modelPath));
+        
+        const currentFloorY = roomDimensions.floorY || -0.5315285924741149;
+        const tableHeight = 0.75; // Typical table height
+        
+        // Calculate Y position: use item.position[1] if it's a plant on table, otherwise use floorY
+        let targetBottomY: number;
+        if (isPlant && hasTable) {
+          // Plant on table: bottom should be at floorY + tableHeight
+          targetBottomY = currentFloorY + tableHeight;
+        } else {
+          // Object on floor: bottom should be at floorY (or slightly above)
+          targetBottomY = currentFloorY + 0.01; // Tiny offset to prevent z-fighting (avoid visible floating)
+        }
+        
+        // Calculate pivot Y from target bottom Y and bottom offset
+        const initialModelY = targetBottomY - bottomOffset;
+        model.position.y = initialModelY;
+          
+          console.log("🔧 Item bottomOffset:", bottomOffset, "Initial Y:", initialModelY, "Floor Y:", currentFloorY);
+          
+          // Start invisible for animation
+          model.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              if (Array.isArray(child.material)) {
+                child.material.forEach((mat: THREE.Material) => {
+                  mat.transparent = true;
+                  mat.opacity = 0;
+                });
+              } else if (child.material) {
+                child.material.transparent = true;
+                child.material.opacity = 0;
+              }
+            }
+          });
+          
+          model.scale.set(0, 0, 0);
+          
+        // Per-item soft contact shadow (cheap, looks better than a hard-edged square).
+        // It "appears with" the generated item and follows it while dragging.
+        ensureItemContactShadow(item, model, {
+          opacity: 0,
+          footprintXZ: { x: itemExtentX, z: itemExtentZ },
+          footprintScale: finalItemScale,
+          scaleOverride: 0,
+        });
+
+          scene.scene.add(model);
+          itemModelsRef.current.set(item.id, model);
+
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/3e379d4a-11d8-484f-b8f7-0a98f77c7c7a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:loadAndRenderItem:preAnim',message:'Model added; scale zeroed for animation',data:{itemId:item.id,baseFitScale:(model.userData as any).baseFitScale,scaleMultiplier:(model.userData as any).scaleMultiplier,targetScale:finalItemScale,modelScaleNow:{x:model.scale.x,y:model.scale.y,z:model.scale.z}},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'C'})}).catch(()=>{});
+          // #endregion
+          
+          // Add TransformControls for this model - attach directly to model
+          const transformControls = new TransformControls(scene.camera, scene.renderer.domElement);
+          transformControls.attach(model);
+          transformControls.setMode("translate"); // Start with translate mode
+          transformControls.setSpace("world");
+          transformControls.enabled = true; // Always enabled
+          transformControls.size = 0.5; // Make controls smaller (default is 1.0)
+          
+          // Store current mode for switching
+          let currentMode: "translate" | "rotate" | "scale" = "translate";
+          
+          // Add keyboard shortcut to switch between translate, rotate, and scale modes
+          const handleKeyDown = (event: KeyboardEvent) => {
+            // Press 'R' to switch to rotate mode, 'T' to switch to translate mode, 'S' for scale popup
+            if (event.key === 'r' || event.key === 'R') {
+              currentMode = "rotate";
+              transformControls.setMode("rotate");
+              event.preventDefault();
+            } else if (event.key === 't' || event.key === 'T') {
+              currentMode = "translate";
+              transformControls.setMode("translate");
+              event.preventDefault();
+            } else if (event.key === 's' || event.key === 'S') {
+              // Show custom popup to enter scale value for proportional scaling
+              event.preventDefault();
+              
+              // Remove any existing scale popup
+              const existingPopup = document.getElementById(`scale-popup-${item.id}`);
+              if (existingPopup) {
+                existingPopup.remove();
+              }
+              
+              const baseFitScale = typeof (model.userData as any).baseFitScale === "number" ? (model.userData as any).baseFitScale : model.scale.x;
+              const currentMultiplier = typeof (model.userData as any).scaleMultiplier === "number" ? (model.userData as any).scaleMultiplier : 1;
+              
+              // Calculate position above the object (top-center) in 3D space
+              // Use world bounding box so this stays correct across scaling/rotation.
+              const objectPosition = new THREE.Vector3();
+              const worldBox = new THREE.Box3().setFromObject(model);
+              const worldCenter = worldBox.getCenter(new THREE.Vector3());
+              objectPosition.set(worldCenter.x, worldBox.max.y, worldCenter.z);
+              
+              // Project 3D position to screen coordinates
+              const updatePopupPosition = () => {
+                const popupEl = document.getElementById(`scale-popup-${item.id}`);
+                if (!popupEl || !sceneRef.current) return;
+                
+                const vector = objectPosition.clone();
+                vector.project(sceneRef.current.camera);
+                
+                const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+                const y = (vector.y * -0.5 + 0.5) * window.innerHeight;
+                
+                popupEl.style.left = `${x}px`;
+                popupEl.style.top = `${y - 12}px`; // Slight pixel lift above the object top
+                popupEl.style.transform = 'translate(-50%, -100%)';
+              };
+              
+              // Create popup element
+              const popup = document.createElement("div");
+              popup.id = `scale-popup-${item.id}`;
+              popup.style.cssText = `
+                position: fixed;
+                background: rgba(255, 255, 255, 0.08);
+                backdrop-filter: blur(20px) saturate(180%);
+                -webkit-backdrop-filter: blur(20px) saturate(180%);
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                border-radius: 12px;
+                padding: 16px 20px;
+                z-index: 10000;
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2),
+                            0 0 0 1px rgba(255, 255, 255, 0.2) inset,
+                            0 1px 0 rgba(255, 255, 255, 0.3) inset;
+                pointer-events: auto;
+              `;
+              
+              popup.innerHTML = `
+                <div style="font-family: 'Playfair Display', serif; color: rgba(255, 255, 255, 0.95); font-size: 13px; margin-bottom: 10px; text-align: center; letter-spacing: 0.5px;">
+                  SCALE MULTIPLIER (CURRENT: ${currentMultiplier.toFixed(2)})
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <input
+                    type="number"
+                    id="scale-input-${item.id}"
+                    value="${currentMultiplier.toFixed(2)}"
+                    step="0.1"
+                    min="0.1"
+                    max="10"
+                    style="
+                      background: rgba(255, 255, 255, 0.1);
+                      border: 1px solid rgba(255, 255, 255, 0.2);
+                      border-radius: 6px;
+                      padding: 8px 12px;
+                      color: rgba(255, 255, 255, 0.95);
+                      font-family: 'Playfair Display', serif;
+                      font-size: 14px;
+                      width: 80px;
+                      outline: none;
+                      transition: all 0.2s;
+                    "
+                    onfocus="this.style.borderColor='rgba(255, 255, 255, 0.4)'; this.style.background='rgba(255, 255, 255, 0.15)'"
+                    onblur="this.style.borderColor='rgba(255, 255, 255, 0.2)'; this.style.background='rgba(255, 255, 255, 0.1)'"
+                  />
+                  <button
+                    id="scale-submit-${item.id}"
+                    style="
+                      background: rgba(255, 255, 255, 0.15);
+                      border: 1px solid rgba(255, 255, 255, 0.2);
+                      border-radius: 6px;
+                      padding: 8px 16px;
+                      color: rgba(255, 255, 255, 0.95);
+                      font-family: 'Playfair Display', serif;
+                      font-size: 12px;
+                      letter-spacing: 0.5px;
+                      cursor: pointer;
+                      transition: all 0.2s;
+                      text-transform: uppercase;
+                    "
+                    onmouseover="this.style.background='rgba(255, 255, 255, 0.25)'; this.style.borderColor='rgba(255, 255, 255, 0.3)'"
+                    onmouseout="this.style.background='rgba(255, 255, 255, 0.15)'; this.style.borderColor='rgba(255, 255, 255, 0.2)'"
+                  >
+                    Apply
+                  </button>
+                </div>
+              `;
+              
+              document.body.appendChild(popup);
+              updatePopupPosition();
+              
+              // Focus input and select text
+              const input = document.getElementById(`scale-input-${item.id}`) as HTMLInputElement;
+              if (input) {
+                input.focus();
+                input.select();
+              }
+              
+              // Handle Enter key in input
+              const handleInputKeyDown = (e: KeyboardEvent) => {
+                if (e.key === 'Enter') {
+                  applyScale();
+                } else if (e.key === 'Escape') {
+                  removePopup();
+                }
+              };
+              
+              // Apply scale function
+              const applyScale = () => {
+                const inputEl = document.getElementById(`scale-input-${item.id}`) as HTMLInputElement;
+                if (!inputEl) return;
+                
+                const newMultiplier = parseFloat(inputEl.value);
+                if (!isNaN(newMultiplier) && newMultiplier > 0 && newMultiplier <= 10) {
+                  (model.userData as any).scaleMultiplier = newMultiplier;
+                  const nextScale = baseFitScale * newMultiplier;
+                  model.scale.set(nextScale, nextScale, nextScale);
+
+              // Keep shadow scale synced immediately (prevents visual snap/jitter).
+              const shadow = itemShadowRef.current.get(item.id);
+              const shadowOpacity =
+                shadow && shadow.material instanceof THREE.MeshBasicMaterial
+                  ? shadow.material.opacity
+                  : 0.65;
+              ensureItemContactShadow(item, model, { opacity: shadowOpacity, scaleOverride: nextScale });
+                  
+                  // Update item state with new multiplier
+                  setItems((prev) =>
+                    prev.map((i) =>
+                      i.id === item.id
+                        ? {
+                            ...i,
+                            scale: newMultiplier,
+                            position: [model.position.x, model.position.y, model.position.z],
+                            rotation: [model.rotation.x, model.rotation.y, model.rotation.z],
+                          }
+                        : i
+                    )
+                  );
+                  
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/3e379d4a-11d8-484f-b8f7-0a98f77c7c7a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:scalePopup:apply',message:'Applied scale multiplier',data:{itemId:item.id,baseFitScale,newMultiplier,nextScale,modelScaleNow:{x:model.scale.x,y:model.scale.y,z:model.scale.z}},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'D'})}).catch(()=>{});
+                  // #endregion
+
+                  console.log(`✅ Scale multiplier set to ${newMultiplier.toFixed(2)} for item ${item.id}`);
+                  removePopup();
+                } else {
+                  inputEl.style.borderColor = 'rgba(255, 100, 100, 0.6)';
+                  setTimeout(() => {
+                    inputEl.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                  }, 500);
+                }
+              };
+              
+              // Remove popup function
+              const removePopup = () => {
+                const popupEl = document.getElementById(`scale-popup-${item.id}`);
+                if (popupEl) {
+                  popupEl.style.opacity = '0';
+                  popupEl.style.transform = popupEl.style.transform + ' scale(0.95)';
+                  popupEl.style.transition = 'all 0.2s ease-out';
+                  setTimeout(() => popupEl.remove(), 200);
+                }
+                document.removeEventListener('keydown', handleInputKeyDown);
+                cleanupPositionUpdate();
+              };
+              
+              // Update position on camera/object movement
+              let positionUpdateInterval: NodeJS.Timeout | null = null;
+              const cleanupPositionUpdate = () => {
+                if (positionUpdateInterval) {
+                  clearInterval(positionUpdateInterval);
+                  positionUpdateInterval = null;
+                }
+              };
+              
+              positionUpdateInterval = setInterval(updatePopupPosition, 100); // Update every 100ms
+              
+              // Attach event listeners
+              const submitBtn = document.getElementById(`scale-submit-${item.id}`);
+              if (submitBtn) {
+                submitBtn.addEventListener('click', applyScale);
+              }
+              if (input) {
+                input.addEventListener('keydown', handleInputKeyDown);
+              }
+              
+              // Cleanup on outside click
+              const handleOutsideClick = (e: MouseEvent) => {
+                const target = e.target as HTMLElement;
+                if (!popup.contains(target)) {
+                  removePopup();
+                  document.removeEventListener('click', handleOutsideClick);
+                }
+              };
+              setTimeout(() => document.addEventListener('click', handleOutsideClick), 100);
+              
+              // Store cleanup for when item is removed
+              (popup as any).__cleanup = () => {
+                cleanupPositionUpdate();
+                document.removeEventListener('click', handleOutsideClick);
+                document.removeEventListener('keydown', handleInputKeyDown);
+              };
+            }
+          };
+          
+          document.addEventListener("keydown", handleKeyDown);
+          
+          // Store cleanup function
+          const cleanupKeyHandler = () => {
+            document.removeEventListener("keydown", handleKeyDown);
+          };
+          
+          // Store cleanup in a way we can call it later
+          (transformControls as any).__cleanupKeyHandler = cleanupKeyHandler;
+          
+          // Make TransformControls more transparent
+          transformControls.traverse((child) => {
+            if (child instanceof THREE.Line) {
+              if (Array.isArray(child.material)) {
+                child.material.forEach((mat: THREE.Material) => {
+                  if (mat instanceof THREE.LineBasicMaterial) {
+                    mat.transparent = true;
+                    mat.opacity = 0.4; // Adjust opacity (0.0 = fully transparent, 1.0 = fully opaque)
+                  }
+                });
+              } else if (child.material instanceof THREE.LineBasicMaterial) {
+                child.material.transparent = true;
+                child.material.opacity = 0.4;
+              }
+            }
+            // Also check for Mesh objects (arrows/spheres on the gizmo)
+            if (child instanceof THREE.Mesh) {
+              if (Array.isArray(child.material)) {
+                child.material.forEach((mat: THREE.Material) => {
+                  mat.transparent = true;
+                  mat.opacity = 0.4;
+                });
+              } else if (child.material) {
+                child.material.transparent = true;
+                child.material.opacity = 0.4;
+              }
+            }
+          });
+          
+          // Update item state when TransformControls changes
+          // Apply constraints only when dragging ends to avoid interfering with controls
+          let updateTimeout: NodeJS.Timeout | null = null;
+          let isDragging = false;
+          
+          // Function to apply constraints and update state
+          const applyConstraintsAndUpdate = () => {
+            // Constrain Y position to prevent dragging below floor
+            const currentFloorY = roomDimensions.floorY || -0.5315285924741149;
+            const minPivotY = currentFloorY - bottomOffset - 0.1;
+            
+            if (model.position.y < minPivotY) {
+              model.position.y = minPivotY;
+            }
+            
+            // Constrain X and Z positions to prevent clipping through walls
+            const roomWidth = roomDimensions.width || 4;
+            const roomDepth = roomDimensions.depth || 4;
+            const roomHalfWidth = roomWidth / 2;
+            const roomHalfDepth = roomDepth / 2;
+            const margin = 0.05;
+            
+            const minX = -roomHalfWidth + itemHalfWidth + margin;
+            const maxX = roomHalfWidth - itemHalfWidth - margin;
+            if (model.position.x < minX) {
+              model.position.x = minX;
+            } else if (model.position.x > maxX) {
+              model.position.x = maxX;
+            }
+            
+            const minZ = -roomHalfDepth + itemHalfDepth + margin;
+            const maxZ = roomHalfDepth - itemHalfDepth - margin;
+            if (model.position.z < minZ) {
+              model.position.z = minZ;
+            } else if (model.position.z > maxZ) {
+              model.position.z = maxZ;
+            }
+            
+            // Update state
+            if (updateTimeout) clearTimeout(updateTimeout);
+            updateTimeout = setTimeout(() => {
+              setItems((prev) =>
+                prev.map((i) =>
+                  i.id === item.id
+                    ? {
+                        ...i,
+                        position: [model.position.x, model.position.y, model.position.z],
+                        rotation: [model.rotation.x, model.rotation.y, model.rotation.z],
+                      }
+                    : i
+                )
+              );
+            }, 100);
+
+            // Keep contact shadow aligned (with cast/front offset) after constraints.
+            const shadow = itemShadowRef.current.get(item.id);
+            if (shadow) {
+              const mat = shadow.material as THREE.MeshBasicMaterial;
+              ensureItemContactShadow(item, model, { opacity: mat.opacity });
+            }
+          };
+          
+          transformControls.addEventListener("change", () => {
+            // Only update state while dragging, constraints applied when drag ends
+            if (isDragging) {
+              if (updateTimeout) clearTimeout(updateTimeout);
+              updateTimeout = setTimeout(() => {
+                setItems((prev) =>
+                  prev.map((i) =>
+                    i.id === item.id
+                      ? {
+                          ...i,
+                          position: [model.position.x, model.position.y, model.position.z],
+                          rotation: [model.rotation.x, model.rotation.y, model.rotation.z],
+                        }
+                      : i
+                  )
+                );
+              }, 100);
+            }
+
+            // Keep contact shadow aligned (with cast/front offset) during dragging too.
+            const shadow = itemShadowRef.current.get(item.id);
+            if (shadow) {
+              const mat = shadow.material as THREE.MeshBasicMaterial;
+              ensureItemContactShadow(item, model, { opacity: mat.opacity });
+            }
+          });
+          
+          // Apply constraints when dragging ends
+          transformControls.addEventListener("dragging-changed", (event: any) => {
+            isDragging = event.value as boolean;
+            if (controlsRef.current) {
+              controlsRef.current.setEnabled(!isDragging);
+            }
+            // Apply constraints when dragging ends
+            if (!isDragging) {
+              applyConstraintsAndUpdate();
+            }
+          });
+          
+          scene.scene.add(transformControls);
+          transformControlsRef.current.set(item.id, transformControls);
+          
+          // Animate appearance
+          const duration = 1500;
+          const startTime = Date.now();
+          const finalScale = finalItemScale;
+          
+          const animateAppearance = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            
+            // Animate scale
+            const currentScale = eased * finalScale;
+            model.scale.set(currentScale, currentScale, currentScale);
+            
+            // Animate opacity
+            const opacity = eased;
+            model.traverse((child) => {
+              if (child instanceof THREE.Mesh) {
+                if (Array.isArray(child.material)) {
+                  child.material.forEach((mat: THREE.Material) => {
+                    mat.opacity = opacity;
+                  });
+                } else if (child.material) {
+                  child.material.opacity = opacity;
+                }
+              }
+            });
+
+            // Fade in the contact shadow with the item (so it "appears with it").
+            const shadow = itemShadowRef.current.get(item.id);
+            if (shadow) {
+              const mat = shadow.material as THREE.MeshBasicMaterial;
+              const targetShadowOpacity = isPlant && hasTable ? 0.16 : 0.36;
+              mat.opacity = eased * targetShadowOpacity;
+              // Keep shadow size synced to animated model scale.
+              ensureItemContactShadow(item, model, { opacity: mat.opacity, scaleOverride: currentScale });
+            }
+            
+            if (progress < 1) {
+              requestAnimationFrame(animateAppearance);
+            } else {
+              resolve();
+            }
+          };
+          
+          animateAppearance();
+        },
+        undefined,
+        (error) => {
+          console.error(`Error loading item ${item.id}:`, error);
+          reject(error);
+        }
+      );
+    });
+  }, [roomDimensions, applyPbrLightingTuning, ensureItemContactShadow, getSurfaceYForItem]);
+
+  // Backfill: if items existed before shadow changes, ensure they have a shadow.
+  useEffect(() => {
+    if (!sceneRef.current) return;
+    items.forEach((item) => {
+      const model = itemModelsRef.current.get(item.id);
+      if (model) {
+        ensureItemContactShadow(item, model, { opacity: 0.36 });
+      }
+    });
+  }, [items, ensureItemContactShadow]);
+
+  // Load and render placed items
+  useEffect(() => {
+    if (!sceneRef.current || items.length === 0) return;
+
+    // Load any new items that haven't been loaded yet
+    items.forEach((item) => {
+      if (!itemModelsRef.current.has(item.id)) {
+        loadAndRenderItem(item).catch(console.error);
+      }
+    });
+  }, [items]);
+
+  // Cleanup item models when removed
+  useEffect(() => {
+    const currentItemIds = new Set(items.map((item) => item.id));
+    itemModelsRef.current.forEach((model, id) => {
+      if (!currentItemIds.has(id) && sceneRef.current) {
+        // Cleanup contact shadow mesh for removed item
+        const shadow = itemShadowRef.current.get(id);
+        if (shadow) {
+          sceneRef.current.scene.remove(shadow);
+          shadow.geometry.dispose();
+          (shadow.material as THREE.Material).dispose();
+          itemShadowRef.current.delete(id);
+        }
+
+        sceneRef.current.scene.remove(model);
+        // Dispose of geometry and materials
+        model.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            if (Array.isArray(child.material)) {
+              child.material.forEach((mat) => mat.dispose());
+            } else if (child.material) {
+              child.material.dispose();
+            }
+          }
+        });
+        itemModelsRef.current.delete(id);
+        
+        // Cleanup TransformControls
+        const controls = transformControlsRef.current.get(id);
+        if (controls && sceneRef.current) {
+          // Cleanup keyboard handler if it exists
+          if ((controls as any).__cleanupKeyHandler) {
+            (controls as any).__cleanupKeyHandler();
+          }
+          sceneRef.current.scene.remove(controls);
+          controls.dispose();
+          transformControlsRef.current.delete(id);
+        }
+      }
+    });
+  }, [items]);
+
+  // Capture top-down image of the room
+  const captureTopDownImage = useCallback(async (): Promise<string> => {
+    if (!sceneRef.current) throw new Error("Scene not initialized");
+
+    const scene = sceneRef.current;
+    const renderer = scene.renderer;
+    const camera = scene.camera;
+
+    // Save current camera state
+    const originalPosition = camera.position.clone();
+    const originalRotation = camera.rotation.clone();
+
+    // Set camera to top-down view
+    const roomHeight = roomDimensions.depth * 1.5; // Position camera above room
+    camera.position.set(0, roomHeight, 0);
+    camera.lookAt(0, 0, 0);
+    camera.up.set(0, 0, -1); // Adjust up vector for top-down
+
+    // Render to get image - reduce quality and size significantly for faster transfer
+    // Reduce renderer size temporarily for smaller image
+    const originalWidth = renderer.domElement.width;
+    const originalHeight = renderer.domElement.height;
+    const maxDimension = 1024; // Limit image to 1024px max dimension
+    
+    if (originalWidth > maxDimension || originalHeight > maxDimension) {
+      const scale = maxDimension / Math.max(originalWidth, originalHeight);
+      renderer.setSize(Math.floor(originalWidth * scale), Math.floor(originalHeight * scale), false);
+    }
+    
+    renderer.render(scene.scene, camera);
+    const dataURL = renderer.domElement.toDataURL("image/jpeg", 0.7); // Use JPEG at 70% quality for smaller size
+    
+    // Restore original renderer size
+    renderer.setSize(originalWidth, originalHeight, false);
+
+    // Restore original camera state
+    camera.position.copy(originalPosition);
+    camera.rotation.copy(originalRotation);
+    camera.up.set(0, 1, 0); // Reset up vector
+
+    return dataURL;
+  }, [roomDimensions]);
+
+  // Capture an isolated image of a model (for sending to Gemini)
+  const captureModelImage = useCallback(async (modelPath: string): Promise<{ image: string; dimensions: { width: number; depth: number; height: number } }> => {
+    if (!sceneRef.current) throw new Error("Scene not initialized");
+
+    return new Promise((resolve, reject) => {
+      const loader = new GLTFLoader();
+      loader.load(
+        modelPath,
+        (gltf) => {
+          try {
+            const model = gltf.scene.clone();
+            
+            // Calculate bounding box to get raw dimensions
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            
+            // Apply the SAME scale that will be used in the actual scene
+            // This matches the scaling logic in loadAndRenderItem
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const itemScale = 0.5 / maxDim; // Same scale as used in loadAndRenderItem
+            
+            // Calculate dimensions AFTER scaling (this is what will actually be in the scene)
+            const scaledDimensions = {
+              width: size.x * itemScale,
+              depth: size.z * itemScale,
+              height: size.y * itemScale,
+            };
+            
+            console.log("📏 Model dimensions - Raw:", size, "Scaled:", scaledDimensions, "Scale factor:", itemScale);
+            
+            // Scale model for visualization (use same scale for consistency)
+            model.scale.set(itemScale, itemScale, itemScale);
+            
+            // Center the model
+            const center = box.getCenter(new THREE.Vector3());
+            model.position.set(-center.x * itemScale, -center.y * itemScale, -center.z * itemScale);
+            
+            // Create a temporary scene for rendering
+            const tempScene = new THREE.Scene();
+            tempScene.background = new THREE.Color(0xf0f0f0); // Light gray background
+            tempScene.add(model);
+            
+            // Add basic lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 5, 5);
+            tempScene.add(ambientLight);
+            tempScene.add(directionalLight);
+            
+            // Create a camera for top-down view
+            const tempCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+            const modelHeight = size.y * itemScale;
+            tempCamera.position.set(0, modelHeight * 2, 0);
+            tempCamera.lookAt(0, 0, 0);
+            tempCamera.up.set(0, 0, -1);
+            
+            // Create a temporary renderer
+            const tempRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            tempRenderer.setSize(512, 512); // Fixed size for model preview
+            tempRenderer.render(tempScene, tempCamera);
+            
+            const imageData = tempRenderer.domElement.toDataURL("image/jpeg", 0.8);
+            
+            // Cleanup
+            tempRenderer.dispose();
+            model.traverse((child) => {
+              if (child instanceof THREE.Mesh) {
+                child.geometry.dispose();
+                if (Array.isArray(child.material)) {
+                  child.material.forEach((mat) => mat.dispose());
+                } else if (child.material) {
+                  child.material.dispose();
+                }
+              }
+            });
+            
+            resolve({ image: imageData, dimensions: scaledDimensions });
+          } catch (error) {
+            reject(error);
+          }
+        },
+        undefined,
+        (error) => reject(error)
+      );
+    });
+  }, []);
+
+  // Add chair function
+  const addChair = useCallback(async () => {
+    if (!sceneRef.current) {
+      console.error("❌ Scene not ready");
+      return;
+    }
+
+    console.log("🚀 addChair() called - starting process...");
+
+    try {
+      // Capture top-down image of room
+      console.log("📸 Capturing top-down image of room...");
+      const roomImageData = await captureTopDownImage();
+      console.log("✅ Room image captured (length:", roomImageData.length, "chars)");
+
+      // Capture model image and get dimensions
+      const modelPath = "/minimalist_potted_succulent_desktop_plant_scan.glb";
+      console.log("📸 Capturing model image and dimensions...");
+      const { image: modelImageData, dimensions: modelDimensions } = await captureModelImage(modelPath);
+      console.log("✅ Model image captured, dimensions:", modelDimensions);
+
+      // Send to API with room context and model information
+      console.log("📡 Sending request to Gemini API with room context and model info...");
+      const response = await fetch("/api/get-placement", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          image: roomImageData,
+          modelImage: modelImageData, // Send model image so Gemini knows what it's placing
+          modelDimensions: modelDimensions, // Send model dimensions
+          label: "Plant",
+          roomWidth: roomDimensions.width,  // Use original dimensions for Gemini
+          roomDepth: roomDimensions.depth,  // Use original dimensions for Gemini
+          existingItems: items.map((item) => ({
+            label: item.modelPath?.includes('couch') ? "Couch" : item.modelPath?.includes('plant') ? "Plant" : "Item",
+            position: item.position,
+            rotation: item.rotation,
+          })),
+        }),
+      });
+
+      console.log("📥 API Response status:", response.status, response.statusText);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("❌ API Error Response:", errorText);
+        throw new Error(`API error: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      const placement = await response.json();
+
+      // Print coordinates from Gemini
+      console.log("📍 Gemini Placement Coordinates:", placement);
+      console.log("   Normalized: x =", placement.x, ", y =", placement.y, ", rotation =", placement.rotation);
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/3e379d4a-11d8-484f-b8f7-0a98f77c7c7a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:addChair:placement',message:'Received placement from API',data:{placement,roomDims:roomDimensions},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
+      // Convert normalized coordinates (0-1) from Gemini to world coordinates in the scaled scene
+      // Gemini uses larger room dimensions (e.g., 5-6m), but scene uses scaled dimensions
+      const geminiWidth = roomDimensions.width || 5; // Gemini sees larger dimensions
+      const geminiDepth = roomDimensions.depth || 5;
+      const scaledWidth = roomDimensions.scaledWidth || (geminiWidth * (roomDimensions.scaleFactor || 1));
+      const scaledDepth = roomDimensions.scaledDepth || (geminiDepth * (roomDimensions.scaleFactor || 1));
+      
+      // Gemini returns coordinates based on larger dimensions, convert to scaled scene coords
+      // Normalized coords (0-1) -> Gemini world coords -> Scaled scene coords
+      const geminiX = (placement.x - 0.5) * geminiWidth;
+      const geminiZ = (placement.y - 0.5) * geminiDepth;
+      const finalX = (geminiX / geminiWidth) * scaledWidth;  // Convert ratio to scaled coords
+      const finalZ = (geminiZ / geminiDepth) * scaledDepth;  // Convert ratio to scaled coords
+
+      // Position Y - will be recalculated in loadAndRenderItem based on bottomOffset
+      // For now, just set a placeholder Y that will be corrected
+      const floorY = roomDimensions.floorY || -0.5315285924741149; // Floor Y from user measurement
+      
+      // This is a placeholder - actual Y will be calculated in loadAndRenderItem
+      const finalY = floorY + 0.3; // Default to floor for now - will be recalculated
+
+      console.log("🌍 World Coordinates:", { x: finalX, y: finalY, z: finalZ, rotation: placement.rotation });
+      console.log("📐 Room Dimensions:", roomDimensions);
+      console.log("🏠 Floor Y:", floorY, "Couch Y:", finalY);
+
+      // Create new item - plant at calculated coordinates
+      const newItem: PlacedItem = {
+        id: Date.now(),
+        modelPath: "/minimalist_potted_succulent_desktop_plant_scan.glb", // Plant model
+        position: [finalX, finalY, finalZ], // Position will be adjusted by floor constraint
+        rotation: [0, placement.rotation || 0, 0],
+        scale: typeof placement.scale === "number" && Number.isFinite(placement.scale) ? placement.scale : 1,
+      };
+
+      // Add item to state (this will trigger the useEffect to load it)
+      setItems((prev) => {
+        // Double-check for duplicates in the state update
+        if (prev.some((i) => i.id === newItem.id)) {
+          console.log(`⚠️ Item ${newItem.id} already in state, skipping duplicate...`);
+          return prev;
+        }
+        console.log(`✅ Adding new item ${newItem.id} to state`);
+        return [...prev, newItem];
+      });
+      
+      // Don't call loadAndRenderItem here - let the useEffect handle it
+      // The useEffect will automatically load the new item when it's added to state
+      
+      if (onAddItem) {
+        onAddItem(newItem);
+      }
+    } catch (error) {
+      console.error("❌ Error adding chair:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error("❌ Full error details:", error);
+      alert(`Failed to add chair: ${errorMessage}`);
+    }
+  }, [roomDimensions, items, onAddItem, captureTopDownImage, loadAndRenderItem]);
+
+  // Expose addChair when ready (after room loads)
+  useEffect(() => {
+    if (!loading && onReady && roomDimensions.width > 0) {
+      onReady(addChair);
+    }
+  }, [loading, roomDimensions, onReady, addChair]);
+
+  // Listen for spacebar to call addChair()
+  useEffect(() => {
+    console.log("🎹 Setting up keyboard listener for spacebar...");
+    
+    const handleKeyPress = (e: KeyboardEvent) => {
+      console.log("🔊 Key pressed:", e.key, "Code:", e.code, "Target:", e.target);
+      
+      // Only trigger on spacebar and when not typing in an input
+      if (e.code === "Space" || e.key === " " || e.keyCode === 32) {
+        // Check if we're in an input field
+        const target = e.target as HTMLElement;
+        const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+        
+        if (isInput) {
+          console.log("⚠️ Ignoring spacebar - typing in input field");
+          return; // Don't trigger if typing in input
+        }
+        
+        e.preventDefault(); // Prevent page scroll
+        e.stopPropagation();
+        
+        console.log("⌨️ Spacebar pressed!");
+        console.log("   Loading state:", loading);
+        console.log("   Room dimensions:", roomDimensions);
+        console.log("   Scene ref exists:", !!sceneRef.current);
+        console.log("   Scene ready check:", !loading && roomDimensions.width > 0 && !!sceneRef.current);
+        
+        // Only run if scene is ready
+        if (!loading && roomDimensions.width > 0 && sceneRef.current) {
+          console.log("✅ Conditions met - calling addChair()");
+          addChair().catch((err) => {
+            console.error("❌ Error in addChair():", err);
+          });
+        } else {
+          console.warn("⚠️ Scene not ready yet - cannot add chair");
+          console.warn("   - loading:", loading);
+          console.warn("   - roomDimensions.width > 0:", roomDimensions.width > 0);
+          console.warn("   - sceneRef.current:", !!sceneRef.current);
+        }
+      }
+    };
+
+    // Add listener to document for better capture
+    document.addEventListener("keydown", handleKeyPress);
+    console.log("✅ Keyboard listener attached to document");
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyPress);
+      console.log("🧹 Keyboard listener removed");
+    };
+  }, [loading, roomDimensions, addChair]);
+
+  return (
+    <div className={cn("w-full h-full relative", className)}>
+      <div
+        ref={containerRef}
+        className="w-full h-full absolute inset-0"
+      />
+      {/* Optional: Add button overlay */}
+      {/* <button
+        onClick={addChair}
+        className="absolute top-4 right-4 z-20 pointer-events-auto bg-white/10 backdrop-blur-sm px-4 py-2 rounded border border-white/20 text-white hover:bg-white/20 transition-colors"
+      >
+        Add Chair
+      </button> */}
+    </div>
+  );
+};
+
+export default SmartScene;
