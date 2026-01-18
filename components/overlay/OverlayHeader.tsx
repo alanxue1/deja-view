@@ -118,7 +118,7 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, on
 
             {/* Center: Deja View */}
             <div className="absolute left-1/2 transform -translate-x-1/2">
-              <h1 className="text-2xl font-semibold text-white">Deja View</h1>
+              <h1 className="text-2xl font-semibold text-white font-serif">Deja View</h1>
             </div>
 
             {/* Right: User Icon or Profile Image */}
@@ -257,7 +257,7 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, on
           <div className="absolute left-1/2 transform -translate-x-1/2 pointer-events-auto">
             <button
               onClick={handleHomeClick}
-              className="text-2xl font-semibold text-[var(--ink)] hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-0 p-0"
+              className="text-2xl font-semibold text-[var(--ink)] font-serif hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-0 p-0"
               data-cursor="hover"
             >
               Deja View

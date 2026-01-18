@@ -7,11 +7,8 @@ import OverlayHeader from "@/components/overlay/OverlayHeader";
 // Routes where the header should be hidden entirely
 const HIDDEN_ROUTES = ["/sign-in", "/sign-up"];
 
-// Routes that use the dark (white text) scheme
-const DARK_SCHEME_ROUTES = ["/room"];
-
-// Routes where the hamburger menu should be hidden
-const NO_HAMBURGER_ROUTES = ["/"];
+// Routes that use the overlay (white text) scheme - typically dark backgrounds
+const OVERLAY_ROUTES = ["/room"];
 
 export const GlobalHeader: React.FC = () => {
   const pathname = usePathname();
@@ -21,15 +18,10 @@ export const GlobalHeader: React.FC = () => {
     return null;
   }
 
-  // Determine color scheme based on route
-  const scheme = DARK_SCHEME_ROUTES.some((route) => pathname.startsWith(route))
-    ? "dark"
-    : "light";
+  // Use overlay mode (white text) on dark background routes
+  const useOverlay = OVERLAY_ROUTES.some((route) => pathname.startsWith(route));
 
-  // Hide hamburger on home page (exact match for "/")
-  const showHamburger = !NO_HAMBURGER_ROUTES.includes(pathname);
-
-  return <OverlayHeader scheme={scheme} showHamburger={showHamburger} />;
+  return <OverlayHeader overlay={useOverlay} />;
 };
 
 export default GlobalHeader;
