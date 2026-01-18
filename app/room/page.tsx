@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import SmartScene, { type DatabaseItemData } from "@/components/three/SmartScene";
 import RoomOverlay from "@/components/overlay/RoomOverlay";
 import ItemDetailModal, { type DatabaseItem } from "@/components/overlay/ItemDetailModal";
 
-export default function RoomPage() {
+function RoomContent() {
   const searchParams = useSearchParams();
   const modelFromUrl = searchParams?.get("model") ?? null;
   
@@ -65,5 +65,17 @@ export default function RoomPage() {
         item={selectedItem}
       />
     </main>
+  );
+}
+
+export default function RoomPage() {
+  return (
+    <Suspense fallback={
+      <div className="fixed inset-0 w-screen h-screen bg-black flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+      </div>
+    }>
+      <RoomContent />
+    </Suspense>
   );
 }

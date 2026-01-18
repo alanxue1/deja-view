@@ -20,12 +20,16 @@ interface CachedMatch {
 
 /**
  * GET /api/match-cache?itemId=xxx
+ * GET /api/match-cache?itemId=xxx&description=xxx&mainItem=xxx
  * 
  * Fetches cached product matches for a given item ID.
+ * If description/mainItem are provided, uses those directly instead of looking up from database.
  * If no cache exists or cache is expired, fetches fresh results from /api/match.
  */
 export async function GET(request: NextRequest) {
   const itemId = request.nextUrl.searchParams.get("itemId");
+  const descriptionParam = request.nextUrl.searchParams.get("description");
+  const mainItemParam = request.nextUrl.searchParams.get("mainItem");
   
   if (!itemId) {
     return NextResponse.json({ error: "itemId is required" }, { status: 400 });
@@ -52,37 +56,40 @@ export async function GET(request: NextRequest) {
       });
     }
     
-    // Cache miss - fetch item details from items collection
-    console.log(`🔍 Cache miss for item ${itemId} - fetching from database...`);
+    // Cache miss - get item details
+    console.log(`🔍 Cache miss for item ${itemId} - fetching details...`);
     
-    let itemObjectId: ObjectId;
-    try {
-      itemObjectId = new ObjectId(itemId);
-    } catch {
-      return NextResponse.json({ error: "Invalid itemId format" }, { status: 400 });
+    let description = descriptionParam || "";
+    let mainItem = mainItemParam || "";
+    
+    // If description/mainItem not provided in params, try to fetch from database
+    if (!description && !mainItem) {
+      try {
+        const itemObjectId = new ObjectId(itemId);
+        const item = await db.collection("items").findOne({ _id: itemObjectId });
+        
+        if (item) {
+          const analysis = item.analysis || {};
+          description = analysis.description || "";
+          mainItem = analysis.main_item || analysis.label || "";
+        }
+      } catch {
+        // Invalid ObjectId format or item not found - continue with empty values
+        console.log(`⚠️ Could not fetch item ${itemId} from database`);
+      }
     }
     
-    const item = await db.collection("items").findOne({ _id: itemObjectId });
-    
-    if (!item) {
-      return NextResponse.json({ error: "Item not found" }, { status: 404 });
-    }
-    
-    // Extract search query from item analysis
-    const analysis = item.analysis || {};
-    const description = analysis.description || "";
-    const mainItem = analysis.main_item || analysis.label || "";
-    
+    // If still no search terms, return error
     if (!description && !mainItem) {
       return NextResponse.json({ 
-        error: "Item has no description or main_item for search",
+        error: "No description available for search. Item may not exist in database.",
         itemId 
       }, { status: 400 });
     }
     
     // Shorten description if needed
     const searchQuery = shortenDescription(description, mainItem, 6);
-    console.log(`🔎 Search query for item ${itemId}: "${searchQuery}" (from: "${description.substring(0, 50)}...")`);
+    console.log(`🔎 Search query for item ${itemId}: "${searchQuery}"`);
     
     // Call /api/match to get products
     const matchUrl = new URL("/api/match", request.url);

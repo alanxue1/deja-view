@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Image from "next/image";
 import type { NormalizedProduct } from "@/lib/match/types";
 
 // Database item type matching what comes from MongoDB items collection
@@ -68,34 +69,6 @@ function BookmarkIcon({ className, filled = false }: { className?: string; fille
   );
 }
 
-function ShoppingCartIcon({ className }: { className?: string }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className={className}>
-      <path
-        d="M9 22C9.55228 22 10 21.5523 10 21C10 20.4477 9.55228 20 9 20C8.44772 20 8 20.4477 8 21C8 21.5523 8.44772 22 9 22Z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M20 22C20.5523 22 21 21.5523 21 21C21 20.4477 20.5523 20 20 20C19.4477 20 19 20.4477 19 21C19 21.5523 19.4477 22 20 22Z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M1 1H5L7.68 14.39C7.77144 14.8504 8.02191 15.264 8.38755 15.5583C8.75318 15.8526 9.2107 16.009 9.68 16H19.4C19.8693 16.009 20.3268 15.8526 20.6925 15.5583C21.0581 15.264 21.3086 14.8504 21.4 14.39L23 6H6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 function ChevronIcon({ direction, className }: { direction: "left" | "right"; className?: string }) {
   return (
     <svg
@@ -129,49 +102,12 @@ function ArrowButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center
+      className="w-8 h-8 rounded-full bg-white/10 border border-white/20 flex items-center justify-center
                  transition-all duration-200 hover:bg-white/20 hover:border-white/30
                  disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white/10"
       aria-label={direction === "left" ? "Previous item" : "Next item"}
     >
-      <ChevronIcon direction={direction} className="text-white/90" />
-    </button>
-  );
-}
-
-function ActionButton({
-  variant,
-  label,
-  icon,
-  active = false,
-  onClick,
-}: {
-  variant: "primary" | "secondary" | "ghost";
-  label: string;
-  icon: React.ReactNode;
-  active?: boolean;
-  onClick: () => void;
-}) {
-  const baseClasses = "flex flex-col items-center gap-1.5 group transition-all duration-200";
-  const buttonClasses = {
-    primary: "w-12 h-12 rounded-full bg-amber-500/90 hover:bg-amber-500 text-white shadow-lg shadow-amber-500/20",
-    secondary: "w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white hover:bg-white/20",
-    ghost: "w-12 h-12 rounded-full bg-white/5 backdrop-blur-md border border-white/10 text-white/70 hover:bg-white/10 hover:text-white",
-  };
-
-  return (
-    <button onClick={onClick} className={baseClasses}>
-      <motion.div
-        whileTap={{ scale: 0.92 }}
-        animate={active ? { scale: [1, 1.1, 1] } : { scale: 1 }}
-        transition={{ duration: 0.15 }}
-        className={`${buttonClasses[variant]} flex items-center justify-center`}
-      >
-        {icon}
-      </motion.div>
-      <span className="text-[10px] text-white/60 group-hover:text-white/80 transition-colors uppercase tracking-wider">
-        {label}
-      </span>
+      <ChevronIcon direction={direction} className="text-white/90 w-4 h-4" />
     </button>
   );
 }
@@ -207,7 +143,16 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
       setCurrentIndex(0);
 
       try {
-        const res = await fetch(`/api/match-cache?itemId=${item._id}`);
+        // Build URL with description/mainItem params for items not in database
+        const params = new URLSearchParams({ itemId: item._id });
+        if (item.analysis?.description) {
+          params.set("description", item.analysis.description);
+        }
+        if (item.analysis?.main_item || item.analysis?.label) {
+          params.set("mainItem", item.analysis.main_item || item.analysis.label || "");
+        }
+        
+        const res = await fetch(`/api/match-cache?${params.toString()}`);
         
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({}));
@@ -264,22 +209,16 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
     }
   };
 
-  // Animation variants
-  const overlayVariants = {
-    hidden: { opacity: 0 },
-    visible: { opacity: 1 },
-    exit: { opacity: 0 },
-  };
-
-  const modalVariants = {
-    hidden: { opacity: 0, scale: 0.95, y: 20 },
-    visible: { opacity: 1, scale: 1, y: 0 },
-    exit: { opacity: 0, scale: 0.95, y: 20 },
-  };
-
+  // Animation variants - floating card
   const cardVariants = {
+    hidden: { opacity: 0, x: 40, scale: 0.95 },
+    visible: { opacity: 1, x: 0, scale: 1 },
+    exit: { opacity: 0, x: 40, scale: 0.95 },
+  };
+
+  const productVariants = {
     enter: (dir: number) => ({
-      x: dir > 0 ? 200 : -200,
+      x: dir > 0 ? 100 : -100,
       opacity: 0,
     }),
     center: {
@@ -287,7 +226,7 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
       opacity: 1,
     },
     exit: (dir: number) => ({
-      x: dir > 0 ? -200 : 200,
+      x: dir > 0 ? -100 : 100,
       opacity: 0,
     }),
   };
@@ -314,227 +253,184 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
     return () => window.removeEventListener("keydown", handleArrowKeys);
   }, [isOpen, state.kind, currentIndex, products.length]);
 
-  const itemName = item?.analysis?.main_item || item?.analysis?.label || "Item";
-
   return (
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          variants={overlayVariants}
+          variants={cardVariants}
           initial="hidden"
           animate="visible"
           exit="exit"
-          transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md"
-          onClick={onClose}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+          className="fixed right-4 top-1/2 -translate-y-1/2 z-50 w-[340px]
+                     bg-zinc-900/90 backdrop-blur-xl rounded-2xl
+                     border border-white/15 shadow-2xl shadow-black/40"
         >
-          <motion.div
-            variants={modalVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className="relative w-full max-w-lg mx-4"
-            onClick={(e) => e.stopPropagation()}
+          {/* Close Button */}
+          <button
+            onClick={onClose}
+            className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-zinc-800 border border-white/20 
+                     flex items-center justify-center hover:bg-zinc-700 transition-colors z-10"
           >
-            {/* Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex-1">
-                <h2 className="text-xl font-serif text-white/95 tracking-wide">
-                  Shop Similar
-                </h2>
-                <p className="text-sm text-white/50 mt-0.5">
-                  {itemName}
-                  {state.kind === "success" && state.searchQuery && (
-                    <span className="text-white/30"> · &quot;{state.searchQuery}&quot;</span>
-                  )}
-                </p>
-              </div>
-              <button
-                onClick={onClose}
-                className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md border border-white/20 
-                         flex items-center justify-center hover:bg-white/20 transition-colors"
-              >
-                <CloseIcon className="text-white/80" />
-              </button>
-            </div>
+            <CloseIcon className="text-white/80 w-4 h-4" />
+          </button>
 
-            {/* Content */}
-            <div className="flex items-center gap-3">
-              {/* Left Arrow */}
-              <ArrowButton
-                direction="left"
-                onClick={goToPrevious}
-                disabled={currentIndex === 0 || products.length === 0}
-              />
-
-              {/* Card Container */}
-              <div className="relative flex-1 h-[420px] sm:h-[480px]">
-                <AnimatePresence mode="wait" custom={direction}>
-                  {state.kind === "loading" ? (
-                    <motion.div
-                      key="loading"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="absolute inset-0 flex flex-col items-center justify-center 
-                               bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl"
-                    >
-                      <div className="w-8 h-8 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
-                      <p className="mt-4 text-sm text-white/60">Finding similar products...</p>
-                    </motion.div>
-                  ) : state.kind === "error" ? (
-                    <motion.div
-                      key="error"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="absolute inset-0 flex flex-col items-center justify-center 
-                               bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-6"
-                    >
-                      <p className="text-red-400/80 text-sm text-center">{state.message}</p>
-                      <button
-                        onClick={() => {
-                          if (item?._id) {
-                            setState({ kind: "loading" });
-                            fetch(`/api/match-cache?itemId=${item._id}`)
-                              .then((res) => res.json())
-                              .then((data) =>
-                                setState({
-                                  kind: "success",
-                                  products: data.products || [],
-                                  searchQuery: data.searchQuery || "",
-                                })
-                              )
-                              .catch((e) =>
-                                setState({ kind: "error", message: e.message })
-                              );
-                          }
-                        }}
-                        className="mt-4 px-4 py-2 rounded-full bg-white/10 text-white/70 text-sm hover:bg-white/20"
-                      >
-                        Retry
-                      </button>
-                    </motion.div>
-                  ) : products.length === 0 ? (
-                    <motion.div
-                      key="empty"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="absolute inset-0 flex flex-col items-center justify-center 
-                               bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl"
-                    >
-                      <p className="text-white/50 text-sm">No similar products found</p>
-                    </motion.div>
-                  ) : currentProduct ? (
-                    <motion.div
-                      key={currentProduct.id}
-                      custom={direction}
-                      variants={cardVariants}
-                      initial="enter"
-                      animate="center"
-                      exit="exit"
-                      transition={{
-                        x: { type: "spring", stiffness: 400, damping: 35 },
-                        opacity: { duration: 0.15 },
-                      }}
-                      className="absolute inset-0 bg-white/5 backdrop-blur-xl border border-white/10 
-                               rounded-3xl overflow-hidden flex flex-col"
-                    >
-                      {/* Product Image */}
-                      <div className="flex-1 min-h-0 bg-white/5 flex items-center justify-center p-4 overflow-hidden">
-                        {currentProduct.images?.[0] ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={currentProduct.images[0]}
-                            alt={currentProduct.title}
-                            className="max-w-full max-h-full object-contain rounded-2xl"
-                          />
-                        ) : (
-                          <div className="text-sm text-white/40">No image available</div>
-                        )}
-                      </div>
-
-                      {/* Product Info */}
-                      <div className="p-5 flex flex-col gap-3 bg-gradient-to-t from-black/30 to-transparent">
-                        {/* Title */}
-                        <h3 className="text-base font-serif text-white/95 leading-snug line-clamp-2">
-                          {currentProduct.title}
-                        </h3>
-
-                        {/* Price & Vendor */}
-                        <div className="flex items-baseline justify-between">
-                          <span className="text-lg text-white/90 font-medium">
-                            {formatPrice(currentProduct)}
-                          </span>
-                          {currentProduct.vendor && (
-                            <span className="text-xs text-white/40 uppercase tracking-wider">
-                              {currentProduct.vendor}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div className="flex items-center justify-center gap-6 pt-2">
-                          {(() => {
-                            const isFavourited = !!currentProduct && favouritedIds.has(currentProduct.id);
-                            return (
-                              <ActionButton
-                                variant="secondary"
-                                label="Save"
-                                active={isFavourited}
-                                icon={
-                                  <BookmarkIcon
-                                    filled={isFavourited}
-                                    className={isFavourited ? "text-amber-400" : "text-white/80"}
-                                  />
-                                }
-                                onClick={handleFavourite}
-                              />
-                            );
-                          })()}
-                          <ActionButton
-                            variant="primary"
-                            label="Buy"
-                            icon={<ShoppingCartIcon className="text-white" />}
-                            onClick={handleBuyNow}
-                          />
-                        </div>
-                      </div>
-                    </motion.div>
-                  ) : null}
-                </AnimatePresence>
-              </div>
-
-              {/* Right Arrow */}
-              <ArrowButton
-                direction="right"
-                onClick={goToNext}
-                disabled={currentIndex >= products.length - 1 || products.length === 0}
-              />
-            </div>
-
-            {/* Pagination */}
-            {products.length > 0 && (
-              <div className="flex items-center justify-center gap-2 mt-4">
-                {products.map((_, idx) => (
+          {/* Content */}
+          <div className="relative h-[420px] overflow-hidden rounded-2xl">
+            <AnimatePresence mode="wait" custom={direction}>
+              {state.kind === "loading" ? (
+                <motion.div
+                  key="loading"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 flex flex-col items-center justify-center"
+                >
+                  <div className="w-6 h-6 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+                  <p className="mt-3 text-xs text-white/60">Finding similar...</p>
+                </motion.div>
+              ) : state.kind === "error" ? (
+                <motion.div
+                  key="error"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 flex flex-col items-center justify-center p-4"
+                >
+                  <p className="text-red-400/80 text-xs text-center">{state.message}</p>
                   <button
-                    key={idx}
                     onClick={() => {
-                      setDirection(idx > currentIndex ? 1 : -1);
-                      setCurrentIndex(idx);
+                      if (item?._id) {
+                        setState({ kind: "loading" });
+                        const params = new URLSearchParams({ itemId: item._id });
+                        if (item.analysis?.description) {
+                          params.set("description", item.analysis.description);
+                        }
+                        if (item.analysis?.main_item || item.analysis?.label) {
+                          params.set("mainItem", item.analysis.main_item || item.analysis.label || "");
+                        }
+                        fetch(`/api/match-cache?${params.toString()}`)
+                          .then((res) => res.json())
+                          .then((data) =>
+                            setState({
+                              kind: "success",
+                              products: data.products || [],
+                              searchQuery: data.searchQuery || "",
+                            })
+                          )
+                          .catch((e) =>
+                            setState({ kind: "error", message: e.message })
+                          );
+                      }
                     }}
-                    className={`w-2 h-2 rounded-full transition-all duration-200 ${
-                      idx === currentIndex
-                        ? "bg-white/80 w-6"
-                        : "bg-white/20 hover:bg-white/40"
-                    }`}
-                  />
-                ))}
-              </div>
-            )}
-          </motion.div>
+                    className="mt-3 px-3 py-1.5 rounded-full bg-white/10 text-white/70 text-xs hover:bg-white/20"
+                  >
+                    Retry
+                  </button>
+                </motion.div>
+              ) : products.length === 0 ? (
+                <motion.div
+                  key="empty"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 flex flex-col items-center justify-center"
+                >
+                  <p className="text-white/50 text-xs">No similar products found</p>
+                </motion.div>
+              ) : currentProduct ? (
+                <motion.div
+                  key={currentProduct.id}
+                  custom={direction}
+                  variants={productVariants}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{
+                    x: { type: "spring", stiffness: 400, damping: 35 },
+                    opacity: { duration: 0.15 },
+                  }}
+                  className="absolute inset-0 flex flex-col"
+                >
+                  {/* Product Image */}
+                  <div className="h-[220px] bg-gradient-to-b from-white/5 to-transparent flex items-center justify-center p-3">
+                    {currentProduct.images?.[0] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={currentProduct.images[0]}
+                        alt={currentProduct.title}
+                        className="max-w-full max-h-full object-contain rounded-xl"
+                      />
+                    ) : (
+                      <div className="text-sm text-white/40">No image</div>
+                    )}
+                  </div>
+
+                  {/* Product Info */}
+                  <div className="flex-1 p-4 flex flex-col">
+                    <h3 className="text-sm font-medium text-white/95 leading-snug line-clamp-2">
+                      {currentProduct.title}
+                    </h3>
+
+                    <div className="flex items-baseline justify-between mt-2">
+                      <span className="text-base text-white/90 font-semibold">
+                        {formatPrice(currentProduct)}
+                      </span>
+                      {currentProduct.vendor && (
+                        <span className="text-[10px] text-white/40 uppercase tracking-wider">
+                          {currentProduct.vendor}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-between mt-auto pt-3">
+                      {/* Nav */}
+                      <div className="flex items-center gap-1.5">
+                        <ArrowButton direction="left" onClick={goToPrevious} disabled={currentIndex === 0} />
+                        <span className="text-[10px] text-white/40 min-w-[40px] text-center">
+                          {currentIndex + 1}/{products.length}
+                        </span>
+                        <ArrowButton direction="right" onClick={goToNext} disabled={currentIndex >= products.length - 1} />
+                      </div>
+
+                      {/* Buy/Save */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleFavourite}
+                          className={`w-8 h-8 rounded-full border flex items-center justify-center transition-colors ${
+                            favouritedIds.has(currentProduct.id)
+                              ? "bg-amber-500/20 border-amber-500/50 text-amber-400"
+                              : "bg-white/5 border-white/20 text-white/60 hover:bg-white/10"
+                          }`}
+                        >
+                          <BookmarkIcon filled={favouritedIds.has(currentProduct.id)} className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={handleBuyNow}
+                          className="h-8 px-4 rounded-full bg-amber-500 hover:bg-amber-400 text-white text-xs font-medium transition-colors"
+                        >
+                          Buy
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </div>
+
+          {/* Shopify Attribution */}
+          <div className="flex items-center justify-center gap-1.5 py-2 border-t border-white/10">
+            <span className="text-[10px] text-white/30">Powered by</span>
+            <Image
+              src="/img/shopify_logo.webp"
+              alt="Shopify"
+              width={70}
+              height={20}
+              className="opacity-50"
+            />
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

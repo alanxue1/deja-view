@@ -411,6 +411,9 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         // Call onItemClick callback with the database item metadata
         if (onItemClick) {
           const dbItemMeta = dbItemsMetaRef.current.get(hitId);
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/27aedacc-7706-407d-b1ae-abccf09ed163',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:onItemClick',message:'Item clicked - checking metadata',data:{hitId,hasMetadata:!!dbItemMeta,metaId:dbItemMeta?._id,mainItem:dbItemMeta?.analysis?.main_item,description:dbItemMeta?.analysis?.description?.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+          // #endregion
           if (dbItemMeta) {
             console.log("[pick] Calling onItemClick with item:", dbItemMeta._id);
             onItemClick(dbItemMeta);
@@ -1913,7 +1916,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   }, [roomDimensions, items, onAddItem, captureTopDownImage, loadAndRenderItem]);
 
   // Save an item to the saved-items collection
-  const saveItemToDb = useCallback(async (item: PlacedItem, glbUrl: string, label: string) => {
+  const saveItemToDb = useCallback(async (item: PlacedItem, glbUrl: string, label: string, dbItemId?: string) => {
     try {
       const response = await fetch("/api/saved-items", {
         method: "POST",
@@ -1926,6 +1929,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           rotation: item.rotation,
           scale: item.scale,
           label: label,
+          dbItemId: dbItemId, // Original item ID from items collection
         }),
       });
       
@@ -2177,6 +2181,10 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
             asset: dbItem.asset,
           });
 
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/27aedacc-7706-407d-b1ae-abccf09ed163',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:loadItemsFromDatabase',message:'Stored metadata for item',data:{itemId,dbItemId:dbItem._id,mainItem:dbItem.analysis?.main_item,description:dbItem.analysis?.description?.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+          // #endregion
+
           console.log(`✅ Adding item from database: ${label} at (${finalX.toFixed(2)}, ${finalZ.toFixed(2)})`);
 
           // Add item to state
@@ -2187,8 +2195,8 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
             return [...prev, newItem];
           });
 
-          // Save to saved-items collection for future loads
-          await saveItemToDb(newItem, glbUrl, label);
+          // Save to saved-items collection for future loads (include dbItemId for later metadata lookup)
+          await saveItemToDb(newItem, glbUrl, label, dbItem._id);
 
           // Small delay between items to let the previous one render and update existingItems
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -2224,6 +2232,10 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       const data = await response.json();
       const savedItems = data.items || [];
       
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/27aedacc-7706-407d-b1ae-abccf09ed163',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:loadSavedItems',message:'Fetched saved items',data:{count:savedItems.length,firstItem:savedItems[0]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H5'})}).catch(()=>{});
+      // #endregion
+      
       if (savedItems.length === 0) {
         console.log("ℹ️ No saved items found");
         return false;
@@ -2244,13 +2256,34 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         
         console.log(`📥 Loading saved item ${i + 1}/${savedItems.length}: ${saved.label}`);
 
+        const itemId = Date.now() + i;
         const newItem: PlacedItem = {
-          id: Date.now() + i,
+          id: itemId,
           modelPath: proxiedUrl,
           position: saved.position,
           rotation: saved.rotation,
           scale: saved.scale,
+          dbItemId: saved.dbItemId || saved._id, // Use original dbItemId if available, else saved item ID
         };
+
+        // Store metadata for the modal - use original item description if available
+        const mainItem = saved.originalMainItem || saved.label || "Furniture";
+        const description = saved.originalDescription || saved.label || "Furniture";
+        dbItemsMetaRef.current.set(itemId, {
+          _id: saved.dbItemId || saved._id,
+          analysis: {
+            main_item: mainItem,
+            label: saved.label,
+            description: description,
+          },
+          asset: {
+            glbUrl: saved.glbUrl,
+          },
+        });
+
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/27aedacc-7706-407d-b1ae-abccf09ed163',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:loadSavedItems',message:'Stored metadata from saved item',data:{itemId,savedId:saved._id,dbItemId:saved.dbItemId,label:saved.label,originalMainItem:saved.originalMainItem,originalDescription:saved.originalDescription?.substring(0,50),mainItemUsed:mainItem,descriptionUsed:description?.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H5'})}).catch(()=>{});
+        // #endregion
 
         setItems((prev) => {
           if (prev.some((item) => item.modelPath === proxiedUrl)) {
@@ -2282,12 +2315,23 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       // Small delay to ensure room is fully rendered
       setTimeout(async () => {
         try {
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/27aedacc-7706-407d-b1ae-abccf09ed163',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:autoLoad',message:'Starting auto-load check',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+          // #endregion
+          
           // First try to load saved items
           const hasSavedItems = await loadSavedItems();
+          
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/27aedacc-7706-407d-b1ae-abccf09ed163',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:autoLoad',message:'loadSavedItems result',data:{hasSavedItems},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+          // #endregion
           
           if (!hasSavedItems) {
             // No saved items, load from database with Gemini placement
             console.log("🔄 No saved items found - loading from items database with Gemini...");
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/27aedacc-7706-407d-b1ae-abccf09ed163',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:autoLoad',message:'Calling loadItemsFromDatabase',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+            // #endregion
             await loadItemsFromDatabase();
           }
         } catch (err) {
