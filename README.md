@@ -292,7 +292,7 @@ Building "multi-step, multi-API" systems is less about any single model — it's
 
 ---
 
-## What's next (mapped to judging criteria)
+## What's next
 
 - **Design**: Fully implement "Resonance Test" — items drift daily for 3 days, disappear if never touched, with clear affordances + undo
 - **Completion**: Durable job queue (replace in-memory state with Redis/DB-backed queue)
