@@ -66,7 +66,7 @@ Déjà View turns online inspiration into a living virtual room:
 flowchart LR
   U[User] --> W[Next.js Web App]
 
-  subgraph Next[Next.js (App Router)]
+  subgraph Next["Next.js App Router"]
     W --> A1[/api/pinterest-board/]
     W --> A2[/api/items/]
     W --> A3[/api/get-placement/]
@@ -75,7 +75,7 @@ flowchart LR
     W --> Auth[Clerk Middleware]
   end
 
-  subgraph Py[FastAPI: pinterest-extraction (port 8000)]
+  subgraph Py["FastAPI: pinterest-extraction :8000"]
     P1[/v1/analyze-job/]
     P2[/v1/extract-item-3d/]
   end
@@ -92,7 +92,7 @@ flowchart LR
   A4 --> DB
 
   W -->|loads GLB via proxy| A5 --> R2
-  A3 -->|placement inference| GV[Gemini (vision)] --> W
+  A3 -->|placement inference| GV[Gemini vision] --> W
 ```
 
 ### Key flows
