@@ -40,7 +40,7 @@ class LLMProvider(ABC):
             max_output_tokens_override: Override max output tokens
             
         Returns:
-            PinAnalysis with LLM-generated description and detected items
+            PinAnalysis with the main item and its details
             
         Raises:
             Exception: If analysis fails

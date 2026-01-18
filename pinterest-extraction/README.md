@@ -1,6 +1,6 @@
 # Pinterest Extraction API
 
-Extracts pins from a **public Pinterest board** and returns 3D-generator-ready JSON with furniture/decor metadata.
+Extracts pins from a **public Pinterest board** and returns 3D-generator-ready JSON with a single main furniture/decor item per image.
 
 ## Quick Start
 
@@ -90,27 +90,12 @@ curl -X POST "http://localhost:8000/v1/analyze" \
       "pin_id": "1097a0d6069851bf03d37bb076a447f9",
       "image_url": "https://i.pinimg.com/736x/10/97/a0/1097a0d6069851bf03d37bb076a447f9.jpg",
       "analysis": {
-        "room_type": "living room",
-        "items": [
-          {
-            "category": "sofa",
-            "identifier": "beige sofa",
-            "description": "Contemporary beige upholstered fabric sofa with low profile, rounded back, plush seat cushions, and neutral throw pillows. Modern minimalist style.",
-            "style": "contemporary",
-            "materials": ["upholstered fabric"],
-            "colors": ["beige", "taupe"],
-            "confidence": 0.92
-          },
-          {
-            "category": "table",
-            "identifier": "black coffee table",
-            "description": "Round low coffee table with dark charcoal matte top and thick cylindrical pedestal base. Modern contemporary style.",
-            "style": "modern contemporary",
-            "materials": ["wood", "painted finish"],
-            "colors": ["charcoal", "black"],
-            "confidence": 0.88
-          }
-        ]
+        "main_item": "beige sofa",
+        "description": "Contemporary beige upholstered fabric sofa with low profile, rounded back, plush seat cushions, and neutral throw pillows. Modern minimalist style.",
+        "style": "contemporary",
+        "materials": ["upholstered fabric"],
+        "colors": ["beige", "taupe"],
+        "confidence": 0.92
       },
       "skipped": false
     }
@@ -119,13 +104,11 @@ curl -X POST "http://localhost:8000/v1/analyze" \
 ```
 
 ### Key Fields for Shopify Product Search
-- **`analysis.items[].identifier`**: Simple search term (e.g., "brown sofa", "orange office chair") → use for quick Shopify searches
-- **`analysis.items[].description`**: Detailed item description → use for advanced Shopify API product search
-- **`analysis.items[].category`**: Furniture category (sofa, chair, table, lamp, bed, shelving, decor, other)
-- **`analysis.items[].style`**: Style classification (contemporary, modern, etc.)
-- **`analysis.items[].materials`**: Detected materials
-- **`analysis.items[].colors`**: Detected colors
-- **`analysis.room_type`**: Detected room type (living_room, bedroom, etc.)
+- **`analysis.main_item`**: Simple search term (e.g., "brown sofa", "orange office chair") → use for quick Shopify searches
+- **`analysis.description`**: Detailed item description → use for advanced Shopify API product search
+- **`analysis.style`**: Style classification (contemporary, modern, etc.)
+- **`analysis.materials`**: Detected materials
+- **`analysis.colors`**: Detected colors
 
 ---
 

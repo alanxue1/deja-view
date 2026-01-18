@@ -3,9 +3,9 @@
 End-to-end test script for the 3D model generation pipeline.
 
 Flow:
-1. Analyze Pinterest board to get pins and items
-2. Pick the first pin with detected furniture items
-3. Start a 3D extraction job for one item
+1. Analyze Pinterest board to get pins and main item
+2. Pick the first analyzed pin with a main item
+3. Start a 3D extraction job for the main item
 4. Poll until job completes
 5. Report results
 
@@ -50,7 +50,7 @@ def check_health():
 
 
 def analyze_board():
-    """Analyze Pinterest board and return pins with items."""
+    """Analyze Pinterest board and return pins with main item."""
     log(f"Analyzing board: {BOARD_URL}")
     log(f"  Max pins: {MAX_PINS}")
 
@@ -81,21 +81,16 @@ def get_single_analyzed_pin(board_data):
     return pins[0]
 
 
-def select_item(pin):
-    """Select the first high-confidence item from a pin."""
-    items = pin["analysis"]["items"]
-    
-    # Sort by confidence and pick the best one
-    sorted_items = sorted(items, key=lambda x: x.get("confidence", 0), reverse=True)
-    item = sorted_items[0]
-    
-    log(f"✅ Selected item:")
-    log(f"  Category: {item['category']}")
-    log(f"  Identifier: {item['identifier']}")
-    log(f"  Description: {item['description'][:80]}...")
-    log(f"  Confidence: {item['confidence']}")
-    
-    return item
+def select_main_item(pin):
+    """Select the main item from a pin analysis."""
+    analysis = pin.get("analysis") or {}
+
+    log("✅ Selected main item:")
+    log(f"  Main item: {analysis.get('main_item')}")
+    log(f"  Description: {(analysis.get('description') or '')[:80]}...")
+    log(f"  Confidence: {analysis.get('confidence')}")
+
+    return analysis
 
 
 def start_3d_job(image_url: str, item_description: str):
@@ -221,20 +216,18 @@ def main():
         sys.exit(1)
 
     analysis = pin.get("analysis") or {}
-    items = analysis.get("items") or []
     log("✅ Using single analyzed pin:")
     log(f"  Pin ID: {pin.get('pin_id')}")
     log(f"  Image URL: {pin.get('image_url')}")
-    log(f"  Room type: {analysis.get('room_type', 'unknown')}")
 
-    if not items:
-        log("❌ No items detected in this pin. Re-run or increase MAX_PINS to try a different pin.")
+    if not analysis.get("main_item"):
+        log("❌ No main item detected in this pin. Re-run or increase MAX_PINS to try a different pin.")
         sys.exit(1)
     
     print()
     
     # Step 4: Select an item
-    item = select_item(pin)
+    item = select_main_item(pin)
     
     print()
     
@@ -242,7 +235,7 @@ def main():
     try:
         job_id = start_3d_job(
             image_url=pin["image_url"],
-            item_description=item["identifier"]  # Use simple identifier for better extraction
+            item_description=item["main_item"]  # Use simple identifier for better extraction
         )
     except Exception as e:
         log(f"❌ Failed to start 3D job: {e}")
