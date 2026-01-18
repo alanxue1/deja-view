@@ -42,6 +42,57 @@ class R2Client:
         
         logger.info(f"Initialized R2 client for bucket: {self.bucket_name}")
     
+    def upload_bytes(
+        self,
+        data: bytes,
+        content_type: str,
+        extension: str,
+        key_prefix: str
+    ) -> tuple[str, str]:
+        """
+        Upload arbitrary bytes to R2 and return its public URL.
+        
+        Args:
+            data: File bytes to upload
+            content_type: MIME type of the file
+            extension: File extension (without dot, e.g., "png", "glb")
+            key_prefix: Prefix for the object key (folder-like structure)
+            
+        Returns:
+            Tuple of (object_key, public_url)
+            
+        Raises:
+            Exception: If upload fails
+        """
+        # Generate unique object key
+        unique_id = uuid.uuid4().hex
+        object_key = f"{key_prefix}/{unique_id}.{extension}"
+        
+        logger.info(f"Uploading to R2: bucket={self.bucket_name}, key={object_key}")
+        
+        try:
+            # Upload to R2 using S3 API
+            # Note: R2 does not support ACL parameters like public-read
+            # Public access is controlled at the bucket level
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=object_key,
+                Body=data,
+                ContentType=content_type
+            )
+            
+            # Construct public URL
+            # Format: https://pub-<bucket-id>.r2.dev/<object-key>
+            public_url = f"{self.public_base_url.rstrip('/')}/{object_key}"
+            
+            logger.info(f"Successfully uploaded to R2: {public_url}")
+            
+            return object_key, public_url
+            
+        except Exception as e:
+            logger.error(f"Failed to upload to R2: {e}")
+            raise Exception(f"R2 upload failed: {e}")
+    
     def upload_image(
         self,
         image_bytes: bytes,
@@ -62,32 +113,12 @@ class R2Client:
         Raises:
             Exception: If upload fails
         """
-        # Generate unique object key
-        unique_id = uuid.uuid4().hex
+        # Extract file extension from content type
         file_extension = content_type.split('/')[-1]  # e.g., "png" from "image/png"
-        object_key = f"{key_prefix}/{unique_id}.{file_extension}"
         
-        logger.info(f"Uploading image to R2: bucket={self.bucket_name}, key={object_key}")
-        
-        try:
-            # Upload to R2 using S3 API
-            # Note: R2 does not support ACL parameters like public-read
-            # Public access is controlled at the bucket level
-            self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=object_key,
-                Body=image_bytes,
-                ContentType=content_type
-            )
-            
-            # Construct public URL
-            # Format: https://pub-<bucket-id>.r2.dev/<object-key>
-            public_url = f"{self.public_base_url.rstrip('/')}/{object_key}"
-            
-            logger.info(f"Successfully uploaded to R2: {public_url}")
-            
-            return object_key, public_url
-            
-        except Exception as e:
-            logger.error(f"Failed to upload to R2: {e}")
-            raise Exception(f"R2 upload failed: {e}")
+        return self.upload_bytes(
+            data=image_bytes,
+            content_type=content_type,
+            extension=file_extension,
+            key_prefix=key_prefix
+        )

@@ -3,7 +3,7 @@ import logging
 from typing import Optional, Any
 from openai import AsyncOpenAI
 
-from app.api.schemas import PinAnalysis, FurnitureItem
+from app.api.schemas import PinAnalysis
 from app.clients.llm.base import LLMProvider
 from app.prompts.furniture import format_prompt, FURNITURE_JSON_SCHEMA
 from app.settings import settings
@@ -130,43 +130,20 @@ Respond ONLY with the JSON object, no markdown, no explanation."""
     
     def _parse_analysis(self, data: dict) -> PinAnalysis:
         """Parse and validate the JSON response into a PinAnalysis object."""
-        # Extract room_type (optional)
-        room_type = data.get("room_type")
-        
-        # Extract items (required, but can be empty list)
-        items_data = data.get("items", [])
-        items = []
-        
-        for item_data in items_data:
-            try:
-                category = item_data.get("category")
-                identifier = item_data.get("identifier")
-                description = item_data.get("description")
-                confidence = item_data.get("confidence")
-                
-                if not category or not identifier or not description or confidence is None:
-                    logger.warning(f"Skipping item with missing required fields: {item_data}")
-                    continue
-                
-                item = FurnitureItem(
-                    category=category,
-                    identifier=identifier,
-                    description=description,
-                    style=item_data.get("style"),
-                    materials=item_data.get("materials", []),
-                    colors=item_data.get("colors", []),
-                    notes=item_data.get("notes"),
-                    confidence=float(confidence)
-                )
-                items.append(item)
-                
-            except Exception as e:
-                logger.warning(f"Failed to parse item: {e}, data: {item_data}")
-                continue
-        
+        main_item = data.get("main_item")
+        description = data.get("description")
+        confidence = data.get("confidence")
+
+        if not main_item or not description or confidence is None:
+            raise ValueError(f"Missing required fields in analysis: {data}")
+
         return PinAnalysis(
-            room_type=room_type,
-            items=items
+            main_item=main_item,
+            description=description,
+            style=data.get("style"),
+            materials=data.get("materials", []),
+            colors=data.get("colors", []),
+            confidence=float(confidence)
         )
     
     async def _retry_with_correction(

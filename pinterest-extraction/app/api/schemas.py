@@ -20,22 +20,14 @@ class AnalyzeRequest(BaseModel):
     )
 
 
-class FurnitureItem(BaseModel):
-    """A detected furniture item in the pin."""
-    category: str = Field(..., description="chair/sofa/table/lamp/bed/shelving/decor/other")
-    identifier: str = Field(..., description="Simple search term for Shopify (e.g., 'brown sofa', 'orange office chair')")
+class PinAnalysis(BaseModel):
+    """LLM-generated analysis of a pin."""
+    main_item: str = Field(..., description="Primary item in the image (e.g., 'beige sofa')")
     description: str = Field(..., description="Detailed description for Shopify product search")
     style: Optional[str] = Field(None, description="Style description")
     materials: List[str] = Field(default_factory=list, description="Detected materials")
     colors: List[str] = Field(default_factory=list, description="Detected colors")
-    notes: Optional[str] = Field(None, description="Additional observations")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score")
-
-
-class PinAnalysis(BaseModel):
-    """LLM-generated analysis of a pin."""
-    room_type: Optional[str] = Field(None, description="Detected room type")
-    items: List[FurnitureItem] = Field(default_factory=list, description="Detected furniture items")
 
 
 class AnalyzedPin(BaseModel):
@@ -87,3 +79,36 @@ class ExtractItemImageResponse(BaseModel):
     mime_type: Optional[str] = Field(default="image/png", description="MIME type of generated image")
     width: Optional[int] = Field(None, description="Width of generated image in pixels")
     height: Optional[int] = Field(None, description="Height of generated image in pixels")
+
+
+class ExtractItem3DRequest(BaseModel):
+    """Request body for extracting an item and generating a 3D model."""
+    image_url: str = Field(..., description="Direct Pinterest image URL (e.g., https://i.pinimg.com/...)")
+    item_description: str = Field(..., description="Description of the item to extract (e.g., 'red handbag', 'wooden chair')")
+    model_image: Optional[str] = Field(default=None, description="Override Gemini image model (e.g., gemini-2.5-flash-image)")
+    max_output_pixels: Optional[int] = Field(default=None, ge=256, le=4096, description="Max output image dimension")
+
+
+class ExtractItem3DJobStartResponse(BaseModel):
+    """Response from starting a 3D extraction job."""
+    job_id: str = Field(..., description="Unique job identifier for polling status")
+
+
+class ExtractItem3DResult(BaseModel):
+    """Result data for a successful 3D extraction job."""
+    source_image_url: str = Field(..., description="Original Pinterest image URL")
+    item_description: str = Field(..., description="Item description that was extracted")
+    result_image_url: str = Field(..., description="Public R2 URL to the extracted item PNG")
+    result_image_r2_key: str = Field(..., description="R2 object key for the PNG")
+    model_glb_url: str = Field(..., description="Public R2 URL to the generated .glb model")
+    model_glb_r2_key: str = Field(..., description="R2 object key for the .glb model")
+
+
+class ExtractItem3DJobStatusResponse(BaseModel):
+    """Response from polling a 3D extraction job status."""
+    job_id: str = Field(..., description="Unique job identifier")
+    status: str = Field(..., description="Job status: queued | running | succeeded | failed | expired")
+    created_at: datetime = Field(..., description="Job creation timestamp")
+    updated_at: datetime = Field(..., description="Job last update timestamp")
+    error: Optional[str] = Field(None, description="Error message if status is failed")
+    result: Optional[ExtractItem3DResult] = Field(None, description="Result data if status is succeeded")

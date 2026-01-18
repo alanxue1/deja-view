@@ -1,15 +1,20 @@
 import logging
+import asyncio
 from fastapi import APIRouter, HTTPException
 
 from app.api.schemas import (
     AnalyzeRequest, AnalyzeResponse, AnalyzedPin,
-    ExtractItemImageRequest, ExtractItemImageResponse
+    ExtractItemImageRequest, ExtractItemImageResponse,
+    ExtractItem3DRequest, ExtractItem3DJobStartResponse,
+    ExtractItem3DJobStatusResponse, ExtractItem3DResult
 )
 from app.clients.scraper import PinterestScraper
 from app.clients.llm.registry import get_llm_provider
 from app.clients.gemini.client import GeminiClient
 from app.clients.storage.r2 import R2Client
+from app.clients.replicate.trellis import run_trellis_and_get_model_url
 from app.utils.http import create_http_client
+from app.jobs.store import get_job_store, STATUS_QUEUED, STATUS_RUNNING, STATUS_SUCCEEDED, STATUS_FAILED
 
 
 logger = logging.getLogger(__name__)
@@ -226,3 +231,181 @@ async def extract_item_image(request: ExtractItemImageRequest):
         r2_object_key=object_key,
         mime_type="image/png"
     )
+
+
+@router.post("/extract-item-3d", response_model=ExtractItem3DJobStartResponse)
+async def extract_item_3d(request: ExtractItem3DRequest):
+    """
+    Start an async job to extract an item and generate a 3D model.
+    
+    Takes a direct Pinterest image URL and item description, extracts a transparent PNG
+    using Gemini Nano Banana, generates a .glb 3D model using Replicate Trellis,
+    uploads both to Cloudflare R2, and returns a job_id for polling.
+    
+    Returns immediately with job_id. Poll /extract-item-3d/{job_id} for status.
+    """
+    logger.info(
+        f"Starting 3D extraction job: image_url={request.image_url}, "
+        f"item='{request.item_description}'"
+    )
+    
+    # Validate image URL
+    if not request.image_url.startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=400,
+            detail="image_url must be a valid HTTP(S) URL"
+        )
+    
+    # Create job in store
+    job_store = get_job_store()
+    job_id = await job_store.create_job({
+        "image_url": request.image_url,
+        "item_description": request.item_description,
+        "model_image": request.model_image,
+        "max_output_pixels": request.max_output_pixels
+    })
+    
+    # Start background processing
+    asyncio.create_task(_process_3d_job(job_id, request))
+    
+    logger.info(f"Created 3D extraction job: {job_id}")
+    
+    return ExtractItem3DJobStartResponse(job_id=job_id)
+
+
+@router.get("/extract-item-3d/{job_id}", response_model=ExtractItem3DJobStatusResponse)
+async def get_extract_item_3d_status(job_id: str):
+    """
+    Get status of a 3D extraction job.
+    
+    Returns job status and result (if succeeded) or error (if failed).
+    """
+    job_store = get_job_store()
+    job = await job_store.get_job(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    # Build response
+    response_data = {
+        "job_id": job.job_id,
+        "status": job.status,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at
+    }
+    
+    if job.error:
+        response_data["error"] = job.error
+    
+    if job.result:
+        response_data["result"] = ExtractItem3DResult(**job.result)
+    
+    return ExtractItem3DJobStatusResponse(**response_data)
+
+
+async def _process_3d_job(job_id: str, request: ExtractItem3DRequest):
+    """
+    Background task to process a 3D extraction job.
+    
+    Steps:
+    1. Download Pinterest image
+    2. Extract item PNG with Gemini
+    3. Upload PNG to R2
+    4. Generate .glb with Trellis
+    5. Download .glb
+    6. Upload .glb to R2
+    7. Update job with result
+    """
+    job_store = get_job_store()
+    
+    try:
+        # Acquire processing slot (concurrency control)
+        await job_store.acquire_slot()
+        
+        # Update status to running
+        await job_store.update_job_status(job_id, STATUS_RUNNING)
+        logger.info(f"Job {job_id}: starting processing")
+        
+        # Step 1: Download Pinterest image
+        logger.info(f"Job {job_id}: downloading image from {request.image_url}")
+        async with create_http_client() as http_client:
+            response = await http_client.get(request.image_url)
+            response.raise_for_status()
+            source_image_bytes = response.content
+        
+        logger.info(f"Job {job_id}: downloaded {len(source_image_bytes)} bytes")
+        
+        # Step 2: Extract item with Gemini
+        logger.info(f"Job {job_id}: extracting item with Gemini")
+        gemini_client = GeminiClient()
+        extracted_image_bytes = await gemini_client.extract_item_transparent(
+            image_bytes=source_image_bytes,
+            item_description=request.item_description,
+            model_override=request.model_image,
+            max_output_pixels=request.max_output_pixels
+        )
+        
+        logger.info(f"Job {job_id}: extracted {len(extracted_image_bytes)} bytes")
+        
+        # Step 3: Upload PNG to R2
+        logger.info(f"Job {job_id}: uploading PNG to R2")
+        r2_client = R2Client()
+        png_object_key, png_public_url = r2_client.upload_image(
+            image_bytes=extracted_image_bytes,
+            content_type="image/png",
+            key_prefix="items"
+        )
+        
+        logger.info(f"Job {job_id}: PNG uploaded to {png_public_url}")
+        
+        # Step 4: Generate .glb with Trellis
+        logger.info(f"Job {job_id}: generating 3D model with Trellis")
+        model_url = await run_trellis_and_get_model_url(extracted_image_bytes)
+        
+        logger.info(f"Job {job_id}: model generated at {model_url}")
+        
+        # Step 5: Download .glb
+        logger.info(f"Job {job_id}: downloading .glb from {model_url}")
+        async with create_http_client(timeout=300) as http_client:  # 5 min timeout for large files
+            response = await http_client.get(model_url)
+            response.raise_for_status()
+            glb_bytes = response.content
+        
+        logger.info(f"Job {job_id}: downloaded {len(glb_bytes)} bytes")
+        
+        # Step 6: Upload .glb to R2
+        logger.info(f"Job {job_id}: uploading .glb to R2")
+        glb_object_key, glb_public_url = r2_client.upload_bytes(
+            data=glb_bytes,
+            content_type="model/gltf-binary",
+            extension="glb",
+            key_prefix="models"
+        )
+        
+        logger.info(f"Job {job_id}: .glb uploaded to {glb_public_url}")
+        
+        # Step 7: Update job with result
+        result = {
+            "source_image_url": request.image_url,
+            "item_description": request.item_description,
+            "result_image_url": png_public_url,
+            "result_image_r2_key": png_object_key,
+            "model_glb_url": glb_public_url,
+            "model_glb_r2_key": glb_object_key
+        }
+        
+        await job_store.update_job_status(job_id, STATUS_SUCCEEDED, result=result)
+        logger.info(f"Job {job_id}: completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Job {job_id}: failed with error: {e}")
+        await job_store.update_job_status(
+            job_id,
+            STATUS_FAILED,
+            error=str(e)
+        )
+    
+    finally:
+        # Release processing slot
+        job_store.release_slot()
+        logger.info(f"Job {job_id}: released processing slot")

@@ -1,6 +1,6 @@
 # Pinterest Extraction API
 
-Extracts pins from a **public Pinterest board** and returns 3D-generator-ready JSON with furniture/decor metadata.
+Extracts pins from a **public Pinterest board** and returns 3D-generator-ready JSON with a single main furniture/decor item per image.
 
 ## Quick Start
 
@@ -21,7 +21,10 @@ OPENAI_API_KEY=your_openai_api_key_here
 # Gemini (for item extraction)
 GEMINI_API_KEY=your_gemini_api_key_here
 
-# Cloudflare R2 (for storing extracted images)
+# Replicate (for 3D model generation)
+REPLICATE_API_TOKEN=your_replicate_token_here
+
+# Cloudflare R2 (for storing extracted images and 3D models)
 R2_ACCOUNT_ID=your_account_id_here
 R2_ACCESS_KEY_ID=your_access_key_id_here
 R2_SECRET_ACCESS_KEY=your_secret_access_key_here
@@ -87,27 +90,12 @@ curl -X POST "http://localhost:8000/v1/analyze" \
       "pin_id": "1097a0d6069851bf03d37bb076a447f9",
       "image_url": "https://i.pinimg.com/736x/10/97/a0/1097a0d6069851bf03d37bb076a447f9.jpg",
       "analysis": {
-        "room_type": "living room",
-        "items": [
-          {
-            "category": "sofa",
-            "identifier": "beige sofa",
-            "description": "Contemporary beige upholstered fabric sofa with low profile, rounded back, plush seat cushions, and neutral throw pillows. Modern minimalist style.",
-            "style": "contemporary",
-            "materials": ["upholstered fabric"],
-            "colors": ["beige", "taupe"],
-            "confidence": 0.92
-          },
-          {
-            "category": "table",
-            "identifier": "black coffee table",
-            "description": "Round low coffee table with dark charcoal matte top and thick cylindrical pedestal base. Modern contemporary style.",
-            "style": "modern contemporary",
-            "materials": ["wood", "painted finish"],
-            "colors": ["charcoal", "black"],
-            "confidence": 0.88
-          }
-        ]
+        "main_item": "beige sofa",
+        "description": "Contemporary beige upholstered fabric sofa with low profile, rounded back, plush seat cushions, and neutral throw pillows. Modern minimalist style.",
+        "style": "contemporary",
+        "materials": ["upholstered fabric"],
+        "colors": ["beige", "taupe"],
+        "confidence": 0.92
       },
       "skipped": false
     }
@@ -116,13 +104,11 @@ curl -X POST "http://localhost:8000/v1/analyze" \
 ```
 
 ### Key Fields for Shopify Product Search
-- **`analysis.items[].identifier`**: Simple search term (e.g., "brown sofa", "orange office chair") → use for quick Shopify searches
-- **`analysis.items[].description`**: Detailed item description → use for advanced Shopify API product search
-- **`analysis.items[].category`**: Furniture category (sofa, chair, table, lamp, bed, shelving, decor, other)
-- **`analysis.items[].style`**: Style classification (contemporary, modern, etc.)
-- **`analysis.items[].materials`**: Detected materials
-- **`analysis.items[].colors`**: Detected colors
-- **`analysis.room_type`**: Detected room type (living_room, bedroom, etc.)
+- **`analysis.main_item`**: Simple search term (e.g., "brown sofa", "orange office chair") → use for quick Shopify searches
+- **`analysis.description`**: Detailed item description → use for advanced Shopify API product search
+- **`analysis.style`**: Style classification (contemporary, modern, etc.)
+- **`analysis.materials`**: Detected materials
+- **`analysis.colors`**: Detected colors
 
 ---
 
@@ -170,6 +156,85 @@ curl -X POST "http://localhost:8000/v1/extract-item-image" \
 
 ---
 
+### Endpoint 3: Extract Item + Generate 3D Model (Async)
+**POST** `/v1/extract-item-3d` → Start job  
+**GET** `/v1/extract-item-3d/{job_id}` → Poll status
+
+Async job-based endpoint that extracts an item from a Pinterest image AND generates a 3D `.glb` model using Replicate Trellis. Returns immediately with a `job_id` for polling.
+
+### Start Job Request
+```bash
+curl -X POST "http://localhost:8000/v1/extract-item-3d" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_url": "https://i.pinimg.com/736x/10/97/a0/1097a0d6069851bf03d37bb076a447f9.jpg",
+    "item_description": "wooden chair"
+  }'
+```
+
+### Start Job Response
+```json
+{
+  "job_id": "abc123def456"
+}
+```
+
+### Poll Status Request
+```bash
+curl "http://localhost:8000/v1/extract-item-3d/abc123def456"
+```
+
+### Poll Status Response (In Progress)
+```json
+{
+  "job_id": "abc123def456",
+  "status": "running",
+  "created_at": "2026-01-17T20:30:00Z",
+  "updated_at": "2026-01-17T20:30:15Z"
+}
+```
+
+### Poll Status Response (Success)
+```json
+{
+  "job_id": "abc123def456",
+  "status": "succeeded",
+  "created_at": "2026-01-17T20:30:00Z",
+  "updated_at": "2026-01-17T20:32:45Z",
+  "result": {
+    "source_image_url": "https://i.pinimg.com/736x/10/97/a0/1097a0d6069851bf03d37bb076a447f9.jpg",
+    "item_description": "wooden chair",
+    "result_image_url": "https://pub-16db5fa34f6c44358a6ad41118051522.r2.dev/items/abc123.png",
+    "result_image_r2_key": "items/abc123.png",
+    "model_glb_url": "https://pub-16db5fa34f6c44358a6ad41118051522.r2.dev/models/def456.glb",
+    "model_glb_r2_key": "models/def456.glb"
+  }
+}
+```
+
+### Job Statuses
+- **`queued`**: Job created, waiting to start
+- **`running`**: Currently processing (Gemini extraction + Trellis generation)
+- **`succeeded`**: Completed successfully, check `result` field
+- **`failed`**: Failed, check `error` field
+- **`expired`**: Job too old, removed from store
+
+### Key Fields
+- **`job_id`**: Unique identifier for polling
+- **`status`**: Current job status
+- **`result.result_image_url`**: Public R2 URL to extracted item PNG (transparent background)
+- **`result.model_glb_url`**: Public R2 URL to generated 3D model (.glb format)
+- **`error`**: Error message if status is `failed`
+
+### Notes
+- Jobs are processed **asynchronously** with max 3 concurrent jobs
+- Typical processing time: **30-120 seconds** (depends on Replicate queue)
+- Jobs expire after 24 hours and are removed from memory
+- Job state is **lost on server restart** (in-memory only)
+- Poll every 2-5 seconds until status is `succeeded` or `failed`
+
+---
+
 ## Real Example
 
 Using the test board at https://ca.pinterest.com/jlaxman2/home-decor/:
@@ -190,7 +255,8 @@ curl -X POST "http://localhost:8000/v1/analyze" \
 - **Python 3.8+**
 - **OpenAI API key** (for board analysis with GPT-5.x)
 - **Gemini API key** (for item extraction with Nano Banana)
-- **Cloudflare R2 account** (for storing extracted images)
+- **Replicate API token** (for 3D model generation with Trellis)
+- **Cloudflare R2 account** (for storing extracted images and 3D models)
 - **Public Pinterest board** (private boards won't work)
 
 ---
@@ -205,6 +271,9 @@ curl -X POST "http://localhost:8000/v1/analyze" \
 | `500 R2 client initialization failed` | Check your R2 credentials (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`) in `.env` |
 | `500 Failed to generate image` | Gemini may have failed to extract the item - try a more specific `item_description` |
 | `500 R2 upload failed` | Verify R2 bucket exists and credentials are correct |
+| `404 Job not found` | Job may have expired (24h TTL) or server restarted |
+| 3D job status `failed` | Check `error` field in response - could be Gemini extraction, Replicate generation, or R2 upload failure |
+| 3D job stuck in `running` | Replicate queue may be slow; check logs or wait longer (can take 2+ minutes) |
 | Some pins skipped | Normal — complex images may fail, check `skip_reason` in response |
 | Empty `pins` array | Board has no accessible pins or all are filtered out |
 
@@ -217,5 +286,9 @@ curl -X POST "http://localhost:8000/v1/analyze" \
 - Some pins may be skipped if LLM analysis fails (partial success is normal)
 - Response time: ~2-5 seconds per pin (analyze endpoint)
 - Response time: ~5-15 seconds per item extraction (extract-item-image endpoint)
-- Extracted images are stored in Cloudflare R2 with transparent backgrounds (PNG)
+- Response time: ~30-120 seconds for 3D model generation (extract-item-3d endpoint, async)
+- Extracted images and 3D models are stored in Cloudflare R2
+- 3D models are in `.glb` format (compatible with Three.js, Babylon.js, etc.)
+- Max 3 concurrent 3D generation jobs to avoid overloading server
+- Jobs are stored in-memory only and lost on server restart
 - R2 public URLs are rate-limited for development use (`r2.dev` subdomain)
