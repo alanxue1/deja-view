@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import { useUser } from "@clerk/nextjs";
 import Container from "@/components/ui/Container";
 
@@ -17,6 +17,48 @@ const UploadIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+// Progress ring component
+const ProgressRing: React.FC<{
+  progress: number;
+  size: number;
+  strokeWidth: number;
+}> = ({ progress, size, strokeWidth }) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const offset = circumference - (progress / 100) * circumference;
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      className="absolute inset-0 -rotate-90"
+    >
+      {/* Background circle */}
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke="#E0E0E0"
+        strokeWidth={strokeWidth}
+      />
+      {/* Progress circle */}
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke="var(--accent)"
+        strokeWidth={strokeWidth}
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        className="transition-all duration-1000 ease-out"
+      />
+    </svg>
+  );
+};
+
 export default function UploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -24,6 +66,12 @@ export default function UploadPage() {
   const [memoryName, setMemoryName] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const [isEdited, setIsEdited] = useState(false);
+  
+  // Loading state
+  const [isLoading, setIsLoading] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState(4 * 60); // 4 minutes in seconds
+  const [progress, setProgress] = useState(0);
+  const totalTime = 4 * 60; // 4 minutes total
 
   // Set default value when user loads
   useEffect(() => {
@@ -33,6 +81,36 @@ export default function UploadPage() {
     }
   }, [user, isEdited]);
 
+  // Countdown timer
+  useEffect(() => {
+    if (!isLoading) return;
+
+    const interval = setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isLoading]);
+
+  // Update progress based on time remaining
+  useEffect(() => {
+    if (!isLoading) return;
+    const elapsed = totalTime - timeRemaining;
+    const newProgress = (elapsed / totalTime) * 100;
+    setProgress(newProgress);
+  }, [timeRemaining, isLoading, totalTime]);
+
+  const formatTime = useCallback((seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    return `${mins} min`;
+  }, []);
+
   const handleUploadClick = () => {
     fileInputRef.current?.click();
   };
@@ -40,7 +118,10 @@ export default function UploadPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Handle file upload logic here
+      // Start loading state
+      setIsLoading(true);
+      setTimeRemaining(4 * 60);
+      setProgress(0);
       console.log("File selected:", file);
     }
   };
@@ -64,6 +145,99 @@ export default function UploadPage() {
     setMemoryName(e.target.value);
     setIsEdited(true);
   };
+
+  // Loading screen
+  if (isLoading) {
+    return (
+      <main className="min-h-screen bg-[var(--bg)] flex flex-col pt-20">
+        <Container className="flex-1 flex flex-col items-center justify-center py-16 px-6">
+          <div className="w-full max-w-2xl flex flex-col items-center animate-fade-in">
+            {/* Loading Title */}
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-serif text-[var(--ink)] font-normal text-center mb-16">
+              Loading your{" "}
+              <span className="text-[var(--accent)] border-b-2 border-[var(--accent)]">
+                {memoryName || "Room"}
+              </span>
+            </h1>
+
+            {/* Progress Ring */}
+            <div className="relative w-36 h-36 md:w-44 md:h-44 mb-6 animate-scale-in">
+              <ProgressRing
+                progress={progress}
+                size={176}
+                strokeWidth={4}
+              />
+              {/* Inner circle */}
+              <div className="absolute inset-3 rounded-full bg-[#E8E8E8] flex items-center justify-center">
+                <span className="text-[var(--ink)] font-sohne text-base md:text-lg">
+                  Ready in {formatTime(timeRemaining)}
+                </span>
+              </div>
+            </div>
+
+            {/* Check back message */}
+            <p className="text-[var(--muted)] font-sohne text-base md:text-lg text-center mb-2 animate-fade-in-up">
+              Check back soon!
+            </p>
+            <p className="text-[var(--muted)] font-sohne text-sm text-center animate-fade-in-up animation-delay-100">
+              Do not close your browser.
+            </p>
+          </div>
+        </Container>
+
+        <style jsx>{`
+          @keyframes fade-in {
+            from {
+              opacity: 0;
+            }
+            to {
+              opacity: 1;
+            }
+          }
+
+          @keyframes scale-in {
+            from {
+              opacity: 0;
+              transform: scale(0.8);
+            }
+            to {
+              opacity: 1;
+              transform: scale(1);
+            }
+          }
+
+          @keyframes fade-in-up {
+            from {
+              opacity: 0;
+              transform: translateY(10px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+
+          .animate-fade-in {
+            animation: fade-in 0.5s ease-out forwards;
+          }
+
+          .animate-scale-in {
+            animation: scale-in 0.6s ease-out forwards;
+          }
+
+          .animate-fade-in-up {
+            animation: fade-in-up 0.5s ease-out forwards;
+            animation-delay: 0.3s;
+            opacity: 0;
+          }
+
+          .animation-delay-100 {
+            animation-delay: 0.4s;
+          }
+        `}</style>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[var(--bg)] flex flex-col pt-20">
