@@ -4,10 +4,14 @@ import React from "react";
 import OverlayHeader from "./OverlayHeader";
 import OverlayFooter from "./OverlayFooter";
 
-export const RoomOverlay: React.FC = () => {
+interface RoomOverlayProps {
+  onRoomSelect?: (modelPath: string) => void;
+}
+
+export const RoomOverlay: React.FC<RoomOverlayProps> = ({ onRoomSelect }) => {
   return (
     <div className="relative z-10 pointer-events-none w-full h-full">
-      <OverlayHeader />
+      <OverlayHeader onRoomSelect={onRoomSelect} />
       <OverlayFooter />
     </div>
   );

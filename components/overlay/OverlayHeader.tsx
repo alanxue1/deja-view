@@ -11,9 +11,10 @@ import Sidebar from "@/components/layout/Sidebar";
 
 interface OverlayHeaderProps {
   overlay?: boolean;
+  onRoomSelect?: (modelPath: string) => void;
 }
 
-export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true }) => {
+export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, onRoomSelect }) => {
   const router = useRouter();
   const clerk = useClerk();
   const { user } = useUser();
@@ -164,14 +165,29 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true }) 
                         }}
                       >
                         <div className="px-2 pb-3">
-                          <div className="text-base font-semibold leading-tight">
-                            {user?.fullName || user?.firstName || "Account"}
-                          </div>
-                          {user?.primaryEmailAddress?.emailAddress && (
-                            <div className="text-xs text-white/75 mt-1">
-                              {user.primaryEmailAddress.emailAddress}
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-white/15 border border-white/20 flex items-center justify-center overflow-hidden">
+                              {user?.imageUrl ? (
+                                <img
+                                  src={user.imageUrl}
+                                  alt={user.firstName || "User"}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <User size={18} className="text-white/90" />
+                              )}
                             </div>
-                          )}
+                            <div className="min-w-0">
+                              <div className="text-base font-semibold leading-tight truncate">
+                                {user?.fullName || user?.firstName || "Account"}
+                              </div>
+                              {user?.primaryEmailAddress?.emailAddress && (
+                                <div className="text-xs text-white/75 mt-1 truncate">
+                                  {user.primaryEmailAddress.emailAddress}
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
 
                         <div className="h-px bg-white/10 my-2" />
@@ -219,7 +235,7 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true }) 
             />
           </div>
         </div>
-        <Sidebar isOpen={isOpen} onClose={() => setOpen(false)} />
+        <Sidebar isOpen={isOpen} onClose={() => setOpen(false)} onRoomSelect={onRoomSelect} />
       </>
     );
   }

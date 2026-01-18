@@ -16,31 +16,8 @@ export const HoverPreview3D: React.FC<HoverPreview3DProps> = ({ modelPath, visib
   const sceneRef = useRef<ThreeScene | null>(null);
   const modelRef = useRef<THREE.Group | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const [position, setPosition] = useState({ top: '50%', left: 'calc(312px + 24px)' });
-
-  // Update position based on parent element
-  useEffect(() => {
-    if (!visible || !parentElement) return;
-    
-    const updatePosition = () => {
-      if (!parentElement) return;
-      const rect = parentElement.getBoundingClientRect();
-      const top = rect.top + rect.height / 2; // Center vertically on the button
-      setPosition({
-        top: `${top}px`,
-        left: 'calc(312px + 24px)' // Sidebar width + margin
-      });
-    };
-    
-    updatePosition();
-    window.addEventListener('scroll', updatePosition);
-    window.addEventListener('resize', updatePosition);
-    
-    return () => {
-      window.removeEventListener('scroll', updatePosition);
-      window.removeEventListener('resize', updatePosition);
-    };
-  }, [visible, parentElement]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _parentElement = parentElement; // Keep prop for API compatibility
 
   useEffect(() => {
     if (!containerRef.current || !visible) return;
@@ -102,9 +79,9 @@ export const HoverPreview3D: React.FC<HoverPreview3DProps> = ({ modelPath, visib
         model.position.y = -center.y;
         model.position.z = -center.z;
         
-        // Scale to fit in preview
+        // Scale to fit in preview (bigger for center display)
         const maxDim = Math.max(size.x, size.y, size.z);
-        const finalScale = 2 / maxDim; // Scale to fit in a 2 unit space
+        const finalScale = 3 / maxDim; // Scale to fit in a 3 unit space
         model.scale.set(finalScale, finalScale, finalScale);
         
         threeScene.scene.add(model);
@@ -167,16 +144,16 @@ export const HoverPreview3D: React.FC<HoverPreview3DProps> = ({ modelPath, visib
   return (
     <div
       ref={containerRef}
-      className="w-[293px] h-[293px] fixed z-[120] pointer-events-none"
+      className="w-[400px] h-[400px] fixed z-[120] pointer-events-none"
       style={{ 
         borderRadius: "12px", 
         overflow: "hidden",
-        backgroundColor: "transparent", // No background
-        border: "none", // No border
-        boxShadow: "none", // No shadow
-        top: position.top,
-        left: position.left,
-        transform: 'translateY(-50%)', // Center vertically
+        backgroundColor: "transparent",
+        border: "none",
+        boxShadow: "none",
+        top: "calc(50% + 40px)",
+        left: "calc(50% + 156px)",
+        transform: "translate(-50%, -50%)",
       }}
     />
   );

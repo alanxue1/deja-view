@@ -9,18 +9,19 @@ import HoverPreview3D from "@/components/three/HoverPreview3D";
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  onRoomSelect?: (modelPath: string) => void;
 }
 
 // Model path mapping for spaces and products
 const MODEL_PATHS: Record<string, string> = {
-  "David's Bedroom": "/uoft-dorm-common-area.glb", // Placeholder - replace with actual model path
+  "David's Bedroom": "/Perfect-empty-room - manual lidar.glb",
   "Uoft Student Dorm": "/uoft-student-dorm.glb",
   "Orange Chair": "/uoft-dorm-common-area.glb", // Placeholder - replace with actual model path
   "Purple table": "/uoft-dorm-common-area.glb", // Placeholder - replace with actual model path
   "Green Terracotta Plant": "/uoft-dorm-common-area.glb", // Placeholder - replace with actual model path
 };
 
-export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onRoomSelect }) => {
   const router = useRouter();
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const dormButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -28,6 +29,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const handleSpacesClick = () => {
     router.push("/upload");
     onClose();
+  };
+
+  const handleRoomClick = (roomName: string) => {
+    const modelPath = MODEL_PATHS[roomName];
+    if (modelPath && onRoomSelect) {
+      onRoomSelect(modelPath);
+      onClose();
+    } else {
+      // Fallback to upload if no callback
+      router.push("/upload");
+      onClose();
+    }
   };
 
   // Disable pointer events on background canvas when sidebar is open
@@ -86,7 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             <ul className="space-y-4 select-none" style={{ userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}>
               <li className="relative" style={{ pointerEvents: 'auto', zIndex: 102 }}>
                 <button
-                  onClick={handleSpacesClick}
+                  onClick={() => handleRoomClick("David's Bedroom")}
                   onMouseEnter={() => setHoveredItem("David's Bedroom")}
                   onMouseLeave={() => setHoveredItem(null)}
                   className="text-base cursor-pointer bg-transparent border-0 p-0 transition-colors duration-200 hover:opacity-70 select-none relative z-[102]"
@@ -118,7 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               <li className="relative" style={{ pointerEvents: 'auto', zIndex: 102 }}>
                 <button
                   ref={dormButtonRef}
-                  onClick={handleSpacesClick}
+                  onClick={() => handleRoomClick("Uoft Student Dorm")}
                   onMouseEnter={() => setHoveredItem("Uoft Student Dorm")}
                   onMouseLeave={() => setHoveredItem(null)}
                   className="text-base cursor-pointer bg-transparent border-0 p-0 transition-colors duration-200 hover:opacity-70 select-none relative z-[102]"

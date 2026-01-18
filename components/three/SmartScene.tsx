@@ -53,6 +53,18 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   const itemModelsRef = useRef<Map<number, THREE.Group>>(new Map());
   const transformControlsRef = useRef<Map<number, TransformControls>>(new Map());
   const isMountedRef = useRef(true);
+  const selectedItemIdRef = useRef<number | null>(null);
+  const isDraggingTransformRef = useRef(false);
+  const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
+  const pointerNdcRef = useRef<THREE.Vector2>(new THREE.Vector2());
+  const clickIntentRef = useRef<{
+    x: number;
+    y: number;
+    time: number;
+    withinCanvas: boolean;
+    pendingHitItemId: number | null;
+    restoreOrbitEnabledTo: boolean | null;
+  } | null>(null);
   
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<PlacedItem[]>([]);
@@ -98,6 +110,77 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       }
     });
   }, []);
+
+  const applySelectionHighlight = useCallback((root: THREE.Object3D) => {
+    root.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const mat of materials) {
+        if (!mat) continue;
+        // Subtle highlight for PBR materials
+        if (mat instanceof THREE.MeshStandardMaterial) {
+          const ud = mat.userData as any;
+          ud.__sel_orig_emissive ??= mat.emissive?.clone?.() ?? new THREE.Color(0x000000);
+          ud.__sel_orig_emissiveIntensity ??= mat.emissiveIntensity ?? 0;
+          mat.emissive = new THREE.Color(0xffffff);
+          mat.emissiveIntensity = 0.12;
+          mat.needsUpdate = true;
+        }
+      }
+    });
+  }, []);
+
+  const clearSelectionHighlight = useCallback((root: THREE.Object3D) => {
+    root.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const mat of materials) {
+        if (!mat) continue;
+        if (mat instanceof THREE.MeshStandardMaterial) {
+          const ud = mat.userData as any;
+          if (ud.__sel_orig_emissive) {
+            mat.emissive = ud.__sel_orig_emissive;
+          }
+          if (typeof ud.__sel_orig_emissiveIntensity === "number") {
+            mat.emissiveIntensity = ud.__sel_orig_emissiveIntensity;
+          }
+          mat.needsUpdate = true;
+        }
+      }
+    });
+  }, []);
+
+  const setSelectedItemId = useCallback(
+    (nextId: number | null) => {
+      const prevId = selectedItemIdRef.current;
+      if (prevId === nextId) return;
+
+      // Clear previous
+      if (typeof prevId === "number") {
+        const prevModel = itemModelsRef.current.get(prevId);
+        if (prevModel) clearSelectionHighlight(prevModel);
+      }
+
+      // Hide/disable all gizmos by default
+      transformControlsRef.current.forEach((controls) => {
+        controls.visible = false;
+        controls.enabled = false;
+      });
+
+      selectedItemIdRef.current = nextId;
+
+      if (typeof nextId === "number") {
+        const model = itemModelsRef.current.get(nextId);
+        if (model) applySelectionHighlight(model);
+        const controls = transformControlsRef.current.get(nextId);
+        if (controls) {
+          controls.visible = true;
+          controls.enabled = true;
+        }
+      }
+    },
+    [applySelectionHighlight, clearSelectionHighlight]
+  );
 
   // Press Enter to "commit" the green calibration floor (if present).
   // Use capture phase so it still triggers even if something stops propagation later.
@@ -159,6 +242,154 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     window.addEventListener("keydown", onKeyDownCapture, { capture: true });
     return () => window.removeEventListener("keydown", onKeyDownCapture, { capture: true } as any);
   }, [setRoomOverlayHint]);
+
+  // Click-to-select: show gizmo + highlight only for the clicked item model.
+  useEffect(() => {
+    if (!sceneRef.current) return;
+    const scene = sceneRef.current;
+    const dom = scene.renderer.domElement;
+
+    const isInteractiveUiTarget = (event: PointerEvent) => {
+      const targetEl = event.target as HTMLElement | null;
+      return (
+        !!targetEl &&
+        !!targetEl.closest(
+          "button, a, input, textarea, select, [role='button'], [role='menu'], [role='menuitem']"
+        )
+      );
+    };
+
+    const isWithinCanvas = (event: PointerEvent) => {
+      const rect = dom.getBoundingClientRect();
+      return !(
+        event.clientX < rect.left ||
+        event.clientX > rect.right ||
+        event.clientY < rect.top ||
+        event.clientY > rect.bottom
+      );
+    };
+
+    const onPointerDownCapture = (event: PointerEvent) => {
+      // If dragging a gizmo, don't change selection.
+      if (isDraggingTransformRef.current) return;
+      if (event.pointerType === "mouse" && typeof event.button === "number" && event.button !== 0) return; // left-click only
+
+      const withinCanvas = isWithinCanvas(event) && !isInteractiveUiTarget(event);
+      let pendingHitItemId: number | null = null;
+      let restoreOrbitEnabledTo: boolean | null = null;
+
+      if (withinCanvas) {
+        console.log("[pick] pointerdown within canvas", {
+          x: event.clientX,
+          y: event.clientY,
+          pointerType: event.pointerType,
+        });
+      }
+
+      if (withinCanvas) {
+        // Raycast immediately on mousedown, then temporarily disable orbit controls if we hit an item.
+        const rect = dom.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        const y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+        pointerNdcRef.current.set(x, y);
+
+        scene.scene.updateMatrixWorld(true);
+        scene.camera.updateMatrixWorld(true);
+
+        const raycaster = raycasterRef.current;
+        raycaster.setFromCamera(pointerNdcRef.current, scene.camera);
+
+        const roots = Array.from(itemModelsRef.current.values()).filter(
+          (o): o is THREE.Group => !!o && (o as any).isGroup
+        );
+
+        if (roots.length > 0) {
+          const hits = raycaster.intersectObjects(roots, true);
+          if (hits.length > 0) {
+            let obj: THREE.Object3D | null = hits[0].object;
+            while (obj) {
+              const ud = (obj as any).userData;
+              if (ud && ud.itemId != null) {
+                const parsed = Number(ud.itemId);
+                if (Number.isFinite(parsed)) pendingHitItemId = parsed;
+                break;
+              }
+              obj = obj.parent;
+            }
+          }
+        }
+
+        console.log("[pick] raycast result", {
+          roots: roots.length,
+          hitItemId: pendingHitItemId,
+        });
+
+        if (pendingHitItemId != null) {
+          const orbit = controlsRef.current;
+          if (orbit) {
+            restoreOrbitEnabledTo = orbit.enabled;
+            orbit.setEnabled(false);
+          }
+        }
+      }
+
+      clickIntentRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        time: Date.now(),
+        withinCanvas,
+        pendingHitItemId,
+        restoreOrbitEnabledTo,
+      };
+    };
+
+    const onPointerUpCapture = (event: PointerEvent) => {
+      if (isDraggingTransformRef.current) return;
+
+      const intent = clickIntentRef.current;
+      clickIntentRef.current = null;
+
+      // Restore orbit controls if we disabled them for a potential pick.
+      if (intent?.restoreOrbitEnabledTo != null && controlsRef.current) {
+        controlsRef.current.setEnabled(intent.restoreOrbitEnabledTo);
+      }
+
+      if (!intent?.withinCanvas) return;
+
+      // If the pointer moved, treat it as camera drag (not a click).
+      const dx = event.clientX - intent.x;
+      const dy = event.clientY - intent.y;
+      const distSq = dx * dx + dy * dy;
+      const movedTooMuch = distSq > 7 * 7; // 7px threshold
+      const tookTooLong = Date.now() - intent.time > 500;
+      if (movedTooMuch || tookTooLong) {
+        console.log("[pick] pointerup ignored (drag/hold)", {
+          movedTooMuch,
+          tookTooLong,
+          dist: Math.sqrt(distSq),
+        });
+        return;
+      }
+
+      const hitId = intent.pendingHitItemId;
+      console.log("[pick] pointerup click", { hitId });
+      if (hitId != null && Number.isFinite(hitId)) {
+        if (selectedItemIdRef.current === hitId) setSelectedItemId(null);
+        else setSelectedItemId(hitId);
+      } else {
+        setSelectedItemId(null);
+      }
+    };
+
+    // Use window capture so we still receive the event even if UI layers are above the canvas.
+    window.addEventListener("pointerdown", onPointerDownCapture, { capture: true });
+    window.addEventListener("pointerup", onPointerUpCapture, { capture: true });
+    console.log("[pick] Selection listeners attached, sceneRef.current exists:", !!scene);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDownCapture, { capture: true } as any);
+      window.removeEventListener("pointerup", onPointerUpCapture, { capture: true } as any);
+    };
+  }, [setSelectedItemId, loading]);
 
   const ensureItemContactShadow = useCallback(
     (
@@ -377,36 +608,41 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         console.log("📐 Room dimensions - For Gemini (FIXED):", { width: REALISTIC_ROOM_WIDTH, depth: REALISTIC_ROOM_DEPTH }, "Scaled (scene):", { width: scaledWidth, depth: scaledDepth }, "Original model:", { width: size.x, depth: size.z });
         console.log("📐 Calibrated floor Y:", calibratedFloorY, "from room model (original:", floorY + ", center:", center.y + ", scale:", finalScale + ")");
         
-        // Create a green floor mesh to visualize the automatically detected floor Y
-        const floorGeometry = new THREE.PlaneGeometry(10, 10);
+        // Prepare green floor mesh (will be shown after room animation)
+        const floorGeometry = new THREE.PlaneGeometry(1.5, 1.5);
         const floorMaterial = new THREE.MeshBasicMaterial({ 
           color: 0x00ff00, 
           side: THREE.DoubleSide,
           transparent: true,
-          opacity: 0.5 // Increased opacity so it's more visible
+          opacity: 0.5
         });
         const floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
         floorMesh.rotation.x = Math.PI / 2; // Rotate to be horizontal
-        floorMesh.position.y = calibratedFloorY; // Use automatically detected floor Y
+        // Set starting floor Y based on room
+        const isUoftDorm = roomModelPath.includes("uoft-student-dorm");
+        floorMesh.position.y = isUoftDorm ? -0.48130348880026463 : -1.0536222685081933;
         floorMesh.position.x = 0;
         floorMesh.position.z = 0;
         floorMesh.name = "calibration-floor";
+        floorMesh.visible = false; // Start hidden, show after room animation
+        floorMesh.scale.set(0, 0, 0); // Start at scale 0 for pop-in
         scene.scene.add(floorMesh);
         floorMeshRef.current = floorMesh;
         
-        // Add TransformControls to floor mesh so user can verify/adjust it
+        // Prepare TransformControls (will be enabled after room animation)
         const floorControls = new TransformControls(scene.camera, scene.renderer.domElement);
         floorControls.attach(floorMesh);
         floorControls.setMode("translate");
         floorControls.setSpace("world");
-        floorControls.enabled = true;
+        floorControls.enabled = false; // Start disabled
+        floorControls.visible = false; // Start hidden
         floorControls.size = 0.8;
         scene.scene.add(floorControls);
         floorControlsRef.current = floorControls;
-
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/3e379d4a-11d8-484f-b8f7-0a98f77c7c7a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:floorCalib:create',message:'Created floor calibration mesh + controls',data:{floorY:calibratedFloorY,meshUUID:floorMesh.uuid,controlsUUID:(floorControls as any).uuid,hasControls:!!floorControlsRef.current,hasMesh:!!floorMeshRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'floor-pre',hypothesisId:'E'})}).catch(()=>{});
-        // #endregion
+        
+        // Show calibration hint immediately
+        setRoomOverlayHint(ROOM_OVERLAY_HINT_CALIBRATION);
+        isCalibratingFloorRef.current = true;
         
         // Disable camera controls when dragging floor mesh
         floorControls.addEventListener("dragging-changed", (event: any) => {
@@ -423,11 +659,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           console.log("   Floor position (x, y, z):", floorMesh.position.x, floorY, floorMesh.position.z);
         });
 
-        // Update footer hint (React-driven via OverlayFooter listener)
-        setRoomOverlayHint(ROOM_OVERLAY_HINT_CALIBRATION);
-        isCalibratingFloorRef.current = true;
-
-        console.log("🏠 Green floor mesh created at automatically detected Y:", calibratedFloorY, "- Press Enter to save and remove");
+        console.log("🏠 Green floor mesh prepared, will show after room animation");
         
         // Start with model invisible/scaled down for animation
         model.scale.set(0, 0, 0);
@@ -467,10 +699,47 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         // Animate model appearance
         const duration = 2500; // 2.5 seconds
         const startTime = Date.now();
+        let floorPlaneTriggered = false;
+        
+        const showFloorPlane = () => {
+          if (floorPlaneTriggered) return;
+          floorPlaneTriggered = true;
+          
+          if (floorMeshRef.current) {
+            floorMeshRef.current.visible = true;
+          }
+          if (floorControlsRef.current) {
+            floorControlsRef.current.enabled = true;
+            floorControlsRef.current.visible = true;
+          }
+          
+          // Scale in the floor mesh
+          if (floorMeshRef.current) {
+            const scaleStartTime = Date.now();
+            const scaleDuration = 300; // 300ms scale animation
+            const animateScale = () => {
+              if (!isMountedRef.current || !floorMeshRef.current) return;
+              const elapsed = Date.now() - scaleStartTime;
+              const progress = Math.min(elapsed / scaleDuration, 1);
+              const eased = 1 - Math.pow(1 - progress, 3);
+              floorMeshRef.current.scale.set(eased, eased, eased);
+              if (progress < 1) {
+                requestAnimationFrame(animateScale);
+              }
+            };
+            animateScale();
+          }
+          console.log("🏠 Green floor calibration plane now visible");
+        };
         
         const animateAppearance = () => {
           const elapsed = Date.now() - startTime;
           const progress = Math.min(elapsed / duration, 1);
+          
+          // Show floor plane after 1.6 seconds into room animation
+          if (elapsed >= 1600 && !floorPlaneTriggered) {
+            showFloorPlane();
+          }
           
           // Easing function (ease out cubic)
           const eased = 1 - Math.pow(1 - progress, 3);
@@ -542,6 +811,11 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
             console.log("✅ Animation complete - Final room dimensions:", { width: finalSize.x, depth: finalSize.z });
             
             setLoading(false);
+            
+            // Ensure floor plane is shown if not already triggered
+            if (!floorPlaneTriggered) {
+              showFloorPlane();
+            }
           }
         };
         
@@ -632,6 +906,14 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       }
     };
   }, [roomModelPath, applyPbrLightingTuning, setRoomOverlayHint]);
+
+  // Clear items when room changes
+  useEffect(() => {
+    // Clear all items when room model path changes
+    setItems([]);
+    itemModelsRef.current.clear();
+    setSelectedItemId(null);
+  }, [roomModelPath]);
 
   // Load and render a single item
   const loadAndRenderItem = useCallback(async (item: PlacedItem): Promise<void> => {
@@ -770,6 +1052,12 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           scene.scene.add(model);
           itemModelsRef.current.set(item.id, model);
 
+          // Mark meshes as selectable (raycast hit -> itemId)
+          (model.userData as any).itemId = item.id;
+          model.traverse((child) => {
+            (child.userData as any).itemId = item.id;
+          });
+
           // #region agent log
           fetch('http://127.0.0.1:7242/ingest/3e379d4a-11d8-484f-b8f7-0a98f77c7c7a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SmartScene.tsx:loadAndRenderItem:preAnim',message:'Model added; scale zeroed for animation',data:{itemId:item.id,baseFitScale:(model.userData as any).baseFitScale,scaleMultiplier:(model.userData as any).scaleMultiplier,targetScale:finalItemScale,modelScaleNow:{x:model.scale.x,y:model.scale.y,z:model.scale.z}},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'C'})}).catch(()=>{});
           // #endregion
@@ -779,7 +1067,8 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           transformControls.attach(model);
           transformControls.setMode("translate"); // Start with translate mode
           transformControls.setSpace("world");
-          transformControls.enabled = true; // Always enabled
+          transformControls.enabled = false; // enabled only when selected
+          transformControls.visible = false; // visible only when selected
           transformControls.size = 0.5; // Make controls smaller (default is 1.0)
           
           // Store current mode for switching
@@ -787,6 +1076,8 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           
           // Add keyboard shortcut to switch between translate, rotate, and scale modes
           const handleKeyDown = (event: KeyboardEvent) => {
+            // Only the selected item should react to shortcuts.
+            if (selectedItemIdRef.current !== item.id) return;
             // Press 'R' to switch to rotate mode, 'T' to switch to translate mode, 'S' for scale popup
             if (event.key === 'r' || event.key === 'R') {
               currentMode = "rotate";
@@ -1149,6 +1440,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           // Apply constraints when dragging ends
           transformControls.addEventListener("dragging-changed", (event: any) => {
             isDragging = event.value as boolean;
+            isDraggingTransformRef.current = isDragging;
             if (controlsRef.current) {
               controlsRef.current.setEnabled(!isDragging);
             }
