@@ -15,6 +15,9 @@ export default function LoadingPage() {
     const startTime = Date.now();
     const minDuration = 2000;
 
+    // Sync Clerk user to MongoDB (fire-and-forget; user is signed in after redirect)
+    fetch("/api/users/sync").catch(() => {});
+
     // Pre-initialize Three.js in background (contributes 80% of progress)
     const runThreeInit = () => {
       try {

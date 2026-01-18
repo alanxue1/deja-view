@@ -1,0 +1,10 @@
+{"location":"Sidebar.tsx:34","message":"handleSpacesClick called","data":{"timestamp":1768693766525},"timestamp":1768693766525,"sessionId":"debug-session","hypothesisId":"D"}
+{"location":"Sidebar.tsx:35","message":"About to call router.push","data":{"targetPath":"/upload","routerExists":true},"timestamp":1768693766531,"sessionId":"debug-session","hypothesisId":"D"}
+{"location":"Sidebar.tsx:37","message":"About to call onClose","data":{"onCloseExists":true},"timestamp":1768693766538,"sessionId":"debug-session","hypothesisId":"D"}
+{"location":"Sidebar.tsx:39","message":"handleSpacesClick completed","data":{"timestamp":1768693766539},"timestamp":1768693766539,"sessionId":"debug-session","hypothesisId":"D"}
+{"location":"Sidebar.tsx:128","message":"+ button onClick fired","data":{"eventType":"click","defaultPrevented":false,"isPropagationStopped":false},"timestamp":1768693772026,"sessionId":"debug-session","hypothesisId":"E"}
+{"location":"Sidebar.tsx:130","message":"Calling handleSpacesClick","data":{"timestamp":1768693772027},"timestamp":1768693772027,"sessionId":"debug-session","hypothesisId":"E"}
+{"location":"Sidebar.tsx:34","message":"handleSpacesClick called","data":{"timestamp":1768693772029},"timestamp":1768693772029,"sessionId":"debug-session","hypothesisId":"D"}
+{"location":"Sidebar.tsx:35","message":"About to call router.push","data":{"targetPath":"/upload","routerExists":true},"timestamp":1768693772030,"sessionId":"debug-session","hypothesisId":"D"}
+{"location":"Sidebar.tsx:37","message":"About to call onClose","data":{"onCloseExists":true},"timestamp":1768693772033,"sessionId":"debug-session","hypothesisId":"D"}
+{"location":"Sidebar.tsx:39","message":"handleSpacesClick completed","data":{"timestamp":1768693772034},"timestamp":1768693772034,"sessionId":"debug-session","hypothesisId":"D"}
