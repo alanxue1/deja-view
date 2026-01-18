@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 
+from app.settings import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,7 @@ class JobStore:
     def __init__(
         self,
         ttl_hours: int = 24,
-        max_concurrent_jobs: int = 3,
+        max_concurrent_jobs: int = settings.job_max_concurrent_jobs,
         cleanup_interval_seconds: int = 3600
     ):
         """
