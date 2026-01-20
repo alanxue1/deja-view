@@ -19,7 +19,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Deja View",
+  title: "Déjà View",
   description: "Experience rooms in 3D",
 };
 

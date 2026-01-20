@@ -31,7 +31,7 @@ export const NavBar: React.FC = () => {
                 className="text-[20px] text-[var(--ink)] hover:opacity-70 transition-opacity font-normal font-sohne cursor-pointer bg-transparent border-0 p-0"
                 data-cursor="hover"
               >
-                Deja View
+                Déjà View
               </button>
             </div>
 

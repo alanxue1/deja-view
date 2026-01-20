@@ -21,6 +21,9 @@ export const CustomCursor: React.FC = () => {
       return;
     }
 
+    // Hide native cursor when custom cursor is active
+    document.body.classList.add("custom-cursor-active");
+
     let rafId: number;
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -63,6 +66,8 @@ export const CustomCursor: React.FC = () => {
     document.addEventListener("mouseleave", handleMouseLeave);
 
     return () => {
+      // Restore native cursor on cleanup
+      document.body.classList.remove("custom-cursor-active");
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mousemove", checkHover);
       document.removeEventListener("mouseenter", handleMouseEnter);

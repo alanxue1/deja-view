@@ -42,6 +42,12 @@
     font-family: var(--font-sans);
   }
 
+  /* Hide native cursor when custom cursor is active */
+  body.custom-cursor-active,
+  body.custom-cursor-active * {
+    cursor: none !important;
+  }
+
   h1,
   h2,
   h3,

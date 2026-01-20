@@ -44,7 +44,7 @@ export default function Home() {
                   What you save leaves a trace.
                 </p>
                 <p className="text-base md:text-lg text-[var(--ink)] leading-relaxed">
-                  Deja View brings it into your room as 3D,<br />
+                  Déjà View brings it into your room as 3D,<br />
                   keep what you touch, let the rest fade.
                 </p>
                 <p className="text-base md:text-lg text-[var(--ink)] leading-relaxed font-medium">

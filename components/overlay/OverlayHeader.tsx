@@ -160,10 +160,10 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
             {/* Left: Hamburger Menu - Placeholder div for layout */}
             <div className="pointer-events-none" style={{ width: '48px', height: '48px' }} />
 
-            {/* Center: Deja View */}
+            {/* Center: Déjà View */}
             {/* Avoid transform-based centering (can cause subpixel/ghosted text rendering) */}
             <div className="absolute inset-x-0 pointer-events-auto flex flex-col items-center">
-              <h1 className="text-2xl font-semibold text-white font-serif mb-3">Deja View</h1>
+              <h1 className="text-2xl font-semibold text-white font-serif mb-3">Déjà View</h1>
               {/* Pinterest Board Input */}
               <div className="flex items-center gap-2">
                 <input
@@ -324,7 +324,7 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
               className="text-2xl font-semibold text-[var(--ink)] font-serif hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-0 p-0 mb-3"
               data-cursor="hover"
             >
-              Deja View
+              Déjà View
             </button>
             {/* Pinterest Board Input */}
             <div className="flex items-center gap-2">

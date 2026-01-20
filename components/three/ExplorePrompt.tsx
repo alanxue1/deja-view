@@ -87,7 +87,7 @@ export const ExplorePrompt: React.FC<ExplorePromptProps> = ({
 
             {/* Text prompt */}
             <p className="font-serif text-lg text-white font-medium tracking-wide">
-              Do you ever get deja vu?
+              Do you ever get déjà vu?
             </p>
           </motion.div>
         </motion.div>
