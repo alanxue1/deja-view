@@ -10,13 +10,11 @@
     <!-- ADD DEMO LINK: <a href="https://your-demo-url.com"><img src="https://img.shields.io/badge/Try%20Demo-Live-orange?style=for-the-badge" alt="Try Demo"></a> -->
 </p>
 
-<p align="center">
-    <a href="https://www.youtube.com/watch?v=jmkodGzbENg">
-        <img src="https://img.youtube.com/vi/jmkodGzbENg/maxresdefault.jpg" alt="Déjà View Demo" width="600">
-    </a>
-    <br>
-    <em>Click to watch the demo</em>
-</p>
+
+
+https://github.com/user-attachments/assets/c901eec9-86a6-4149-9e51-66fe814d9101
+
+
 
 <br>
 
@@ -186,7 +184,7 @@ Déjà View bridges that gap: discover → visualize in 3D → decide with conte
 |:-----|:-----|
 | **David Liu** | Web app, UI/UX, product, video/LiDAR → 3D room model |
 | **Julian Laxman** | Pinterest integration, Pinterest → 2D → 3D pipeline, backend integration |
-| **Alan Xue** | Shopify integration, search query generation from item tags |
+| **Alan Xue** | Shopify integration, UI/UX, Web app, Google PSE API -> MongoDB pipeline integration |
 | **Charles Bae** | 3D room modeling & object placement logic, Three.js integration, system components integration|
 
 ---
