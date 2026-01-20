@@ -18,18 +18,54 @@
     <em>Click to watch the demo</em>
 </p>
 
-![Landing Page](docs/ui-landing.png)
+<br>
 
-![Room View](docs/ui-room.png)
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/ui-landing.png" alt="Landing Page" width="100%">
+      <br>
+      <em>Landing Page</em>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/ui-room.png" alt="Room View" width="100%">
+      <br>
+      <em>3D Room View</em>
+    </td>
+  </tr>
+</table>
+
+<br>
 
 ## The Pipeline
 
 See how Déjà View transforms your Pinterest inspiration into interactive 3D objects:
 
-| Pinterest | 2D Render | 3D Model |
-|:---------:|:---------:|:--------:|
-| ![Pinterest](docs/pipeline-pinterest.png) | ![2D](docs/pipeline-2d.png) | ![3D](docs/pipeline-3d.gif) |
-| *Source inspiration* | *AI-extracted product* | *Generated 3D model* |
+<table>
+  <tr>
+    <th align="center" width="33%">Pinterest</th>
+    <th align="center" width="33%">2D Render</th>
+    <th align="center" width="33%">3D Model</th>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/pipeline-pinterest.png" alt="Pinterest" width="100%">
+    </td>
+    <td align="center">
+      <img src="docs/pipeline-2d.png" alt="2D Render" width="100%">
+    </td>
+    <td align="center">
+      <img src="docs/pipeline-3d.gif" alt="3D Model" width="100%">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><em>Source inspiration</em></td>
+    <td align="center"><em>AI-extracted product</em></td>
+    <td align="center"><em>Generated 3D model</em></td>
+  </tr>
+</table>
+
+<br>
 
 ## How It Works
 
@@ -39,6 +75,8 @@ See how Déjà View transforms your Pinterest inspiration into interactive 3D ob
 4. **Place**: Objects appear naturally in your virtual room
 5. **Interact**: Click items to inspect, adjust placement, or shop similar products
 6. **Curate**: What you touch stays; what you ignore fades — your space reflects you
+
+<br>
 
 ## Quick Start
 
@@ -74,6 +112,8 @@ uvicorn app.main:app --reload --port 8000
 
 API docs at `http://localhost:8000/docs`
 
+<br>
+
 ## Architecture
 
 ```mermaid
@@ -106,18 +146,31 @@ flowchart LR
 
 ### Tech Stack
 
-**Frontend**
-- Next.js 14 & React
-- Three.js for 3D rendering
-- Clerk for authentication
-- Framer Motion & GSAP for animations
+<table>
+  <tr>
+    <td valign="top" width="50%">
+      <strong>Frontend</strong>
+      <ul>
+        <li>Next.js 14 & React</li>
+        <li>Three.js for 3D rendering</li>
+        <li>Clerk for authentication</li>
+        <li>Framer Motion & GSAP for animations</li>
+      </ul>
+    </td>
+    <td valign="top" width="50%">
+      <strong>Backend</strong>
+      <ul>
+        <li>FastAPI with async job polling</li>
+        <li>Gemini for item extraction & placement</li>
+        <li>Replicate Trellis for 3D <code>.glb</code> generation</li>
+        <li>MongoDB for data persistence</li>
+        <li>Cloudflare R2 for asset storage</li>
+      </ul>
+    </td>
+  </tr>
+</table>
 
-**Backend**
-- FastAPI with async job polling
-- Gemini for item extraction & placement
-- Replicate Trellis for 3D `.glb` generation
-- MongoDB for data persistence
-- Cloudflare R2 for asset storage
+<br>
 
 ## Inspiration
 
@@ -125,12 +178,16 @@ University students express identity through their space, but buying furniture f
 
 Déjà View bridges that gap: discover → visualize in 3D → decide with context → shop what truly belongs.
 
+<br>
+
 ## Team
 
-- **Julian Laxman** — Product & Integration
-- **David Liu** — Web App & UX
-- **Alan Xue** — Commerce Integration
-- **Charles Bae** — Backend Pipeline
+| Name | Role |
+|:-----|:-----|
+| **David Liu** | Web app, UI/UX, product, video/LiDAR → 3D room model |
+| **Julian Laxman** | Pinterest integration, Pinterest → 2D → 3D pipeline, backend integration |
+| **Alan Xue** | Shopify integration, search query generation from item tags |
+| **Charles Bae** | 3D room modeling & object placement logic, Three.js integration, system components integration|
 
 ---
 
