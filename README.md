@@ -10,9 +10,13 @@
     <!-- ADD DEMO LINK: <a href="https://your-demo-url.com"><img src="https://img.shields.io/badge/Try%20Demo-Live-orange?style=for-the-badge" alt="Try Demo"></a> -->
 </p>
 
-<!-- Demo video: uncomment when ready
-https://github.com/user-attachments/assets/YOUR_VIDEO_ID
--->
+<p align="center">
+    <a href="https://www.youtube.com/watch?v=jmkodGzbENg">
+        <img src="https://img.youtube.com/vi/jmkodGzbENg/maxresdefault.jpg" alt="Déjà View Demo" width="600">
+    </a>
+    <br>
+    <em>Click to watch the demo</em>
+</p>
 
 ![Landing Page](docs/ui-landing.png)
 
