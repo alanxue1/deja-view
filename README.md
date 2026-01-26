@@ -76,97 +76,10 @@ See how Déjà View transforms your Pinterest inspiration into interactive 3D ob
 
 <br>
 
-## Quick Start
-
-### Prerequisites
-
-- Node.js 18+
-- Python 3.10+
-- API keys: Clerk, Gemini, Replicate, Cloudflare R2, Google CSE
-
-### Frontend (Next.js)
-
-```bash
-cd deja-view
-npm install
-cp env.example .env.local
-# Fill in your API keys
-npm run dev
-```
-
-App runs at `http://localhost:3000`
-
-### Backend (FastAPI)
-
-```bash
-cd pinterest-extraction
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp env.example .env
-# Fill in your API keys
-uvicorn app.main:app --reload --port 8000
-```
-
-API docs at `http://localhost:8000/docs`
-
-<br>
-
 ## Architecture
 
-```mermaid
-flowchart LR
-  U[User] --> W[Next.js App]
+<img width="9237" height="4223" alt="image" src="https://github.com/user-attachments/assets/63185cb5-6584-45b2-852e-d89a9adb705f" />
 
-  subgraph Frontend["Next.js App Router"]
-    W --> A1[/api/pinterest-board/]
-    W --> A2[/api/items/]
-    W --> A3[/api/get-placement/]
-    W --> A4[/api/match-cache/]
-  end
-
-  subgraph Backend["FastAPI :8000"]
-    P1[/v1/analyze-job/]
-    P2[/v1/extract-item-3d/]
-  end
-
-  A1 -->|start + poll| P1
-  A1 -->|start + poll| P2
-
-  P1 -->|LLM analysis| LLM[OpenAI]
-  P2 -->|item extraction| G[Gemini]
-  P2 -->|3D generation| R[Replicate Trellis]
-  P2 -->|store assets| R2[Cloudflare R2]
-
-  A2 --> DB[(MongoDB)]
-  A3 -->|placement inference| GV[Gemini Vision]
-```
-
-### Tech Stack
-
-<table>
-  <tr>
-    <td valign="top" width="50%">
-      <strong>Frontend</strong>
-      <ul>
-        <li>Next.js 14 & React</li>
-        <li>Three.js for 3D rendering</li>
-        <li>Clerk for authentication</li>
-        <li>Framer Motion & GSAP for animations</li>
-      </ul>
-    </td>
-    <td valign="top" width="50%">
-      <strong>Backend</strong>
-      <ul>
-        <li>FastAPI with async job polling</li>
-        <li>Gemini for item extraction & placement</li>
-        <li>Replicate Trellis for 3D <code>.glb</code> generation</li>
-        <li>MongoDB for data persistence</li>
-        <li>Cloudflare R2 for asset storage</li>
-      </ul>
-    </td>
-  </tr>
-</table>
 
 <br>
 
