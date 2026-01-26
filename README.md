@@ -78,7 +78,7 @@ See how Déjà View transforms your Pinterest inspiration into interactive 3D ob
 
 ## Architecture
 
-<img width="9237" height="4223" alt="image" src="https://github.com/user-attachments/assets/63185cb5-6584-45b2-852e-d89a9adb705f" />
+<img width="9237" height="4223" alt="image" src="https://github.com/user-attachments/assets/6e434a01-5bb7-4596-8385-93a970d3d6b8" />
 
 
 <br>
