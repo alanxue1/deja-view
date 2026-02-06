@@ -98,7 +98,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   const [roomDimensions, setRoomDimensions] = useState<{ width: number; depth: number; floorY: number; scaledWidth?: number; scaledDepth?: number; scaleFactor?: number }>({ width: 4, depth: 4, floorY: -0.5315285924741149 }); // Floor Y from user measurement
   const [showDeletePopup, setShowDeletePopup] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<number | null>(null);
-  const [dbImportEnabled, setDbImportEnabled] = useState(false);
+  const [dbImportEnabled, setDbImportEnabled] = useState(true);
   const floorMeshRef = useRef<THREE.Mesh | null>(null);
   const floorControlsRef = useRef<TransformControls | null>(null);
   const itemShadowRef = useRef<Map<number, THREE.Mesh>>(new Map());
@@ -237,12 +237,17 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     );
   }, []);
 
-  // DB import gating: saved items + polling only start after user submits a Pinterest URL.
+  // DB import is always enabled — items in MongoDB should always appear in the room.
+  // The sessionStorage event listener is kept so that pasting a Pinterest URL can still
+  // trigger an immediate re-check (e.g. after new items are added mid-session).
   useEffect(() => {
     if (typeof window === "undefined") return;
     const syncFromStorage = () => {
-      const enabled = window.sessionStorage.getItem("dejaView:dbImportEnabled") === "1";
-      setDbImportEnabled(enabled);
+      // If the flag is explicitly set, honour it; otherwise keep the default (true).
+      const raw = window.sessionStorage.getItem("dejaView:dbImportEnabled");
+      if (raw !== null) {
+        setDbImportEnabled(raw === "1");
+      }
     };
     syncFromStorage();
     window.addEventListener("dejaView:dbImportEnabled", syncFromStorage);

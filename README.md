@@ -10,11 +10,7 @@
     <!-- ADD DEMO LINK: <a href="https://your-demo-url.com"><img src="https://img.shields.io/badge/Try%20Demo-Live-orange?style=for-the-badge" alt="Try Demo"></a> -->
 </p>
 
-
-
 https://github.com/user-attachments/assets/c901eec9-86a6-4149-9e51-66fe814d9101
-
-
 
 <br>
 
@@ -80,7 +76,6 @@ See how Déjà View transforms your Pinterest inspiration into interactive 3D ob
 
 <img width="9237" height="4223" alt="image" src="https://github.com/user-attachments/assets/6e434a01-5bb7-4596-8385-93a970d3d6b8" />
 
-
 <br>
 
 ## Inspiration
@@ -93,12 +88,12 @@ Déjà View bridges that gap: discover → visualize in 3D → decide with conte
 
 ## Team
 
-| Name | Role |
-|:-----|:-----|
-| **David Liu** | Web app, UI/UX, product, video/LiDAR → 3D room model |
-| **Julian Laxman** | Pinterest integration, Pinterest → 2D → 3D pipeline, backend integration |
-| **Alan Xue** | Shopify integration, UI/UX, Web app, Google PSE API -> MongoDB pipeline integration |
-| **Charles Bae** | 3D room modeling & object placement logic, Three.js integration, system components integration|
+| Name              | Role                                                                                           |
+| :---------------- | :--------------------------------------------------------------------------------------------- |
+| **David Liu**     | Web app, UI/UX, product, video/LiDAR → 3D room model                                           |
+| **Julian Laxman** | Pinterest integration, Pinterest → 2D → 3D pipeline, backend integration                       |
+| **Alan Xue**      | Shopify integration, UI/UX, Web app, Google PSE API -> MongoDB pipeline integration            |
+| **Charles Bae**   | 3D room modeling & object placement logic, Three.js integration, system components integration |
 
 ---
 
