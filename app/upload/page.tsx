@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import Container from "@/components/ui/Container";
 
@@ -62,16 +63,18 @@ const ProgressRing: React.FC<{
 export default function UploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
   const { user } = useUser();
   const [memoryName, setMemoryName] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const [isEdited, setIsEdited] = useState(false);
+  const [fileCount, setFileCount] = useState(0);
   
   // Loading state
   const [isLoading, setIsLoading] = useState(false);
-  const [timeRemaining, setTimeRemaining] = useState(4 * 60); // 4 minutes in seconds
+  const [timeRemaining, setTimeRemaining] = useState(8); // 8 seconds for demo
   const [progress, setProgress] = useState(0);
-  const totalTime = 4 * 60; // 4 minutes total
+  const totalTime = 8; // 8 seconds total for demo fake processing
 
   // Set default value when user loads
   useEffect(() => {
@@ -81,7 +84,7 @@ export default function UploadPage() {
     }
   }, [user, isEdited]);
 
-  // Countdown timer
+  // Countdown timer – navigates to room when done
   useEffect(() => {
     if (!isLoading) return;
 
@@ -89,6 +92,8 @@ export default function UploadPage() {
       setTimeRemaining((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
+          // Navigate to the demo room once "processing" finishes
+          router.replace("/room?demo=1");
           return 0;
         }
         return prev - 1;
@@ -96,7 +101,7 @@ export default function UploadPage() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isLoading]);
+  }, [isLoading, router]);
 
   // Update progress based on time remaining
   useEffect(() => {
@@ -107,8 +112,11 @@ export default function UploadPage() {
   }, [timeRemaining, isLoading, totalTime]);
 
   const formatTime = useCallback((seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    return `${mins} min`;
+    if (seconds >= 60) {
+      const mins = Math.floor(seconds / 60);
+      return `${mins} min`;
+    }
+    return `${seconds}s`;
   }, []);
 
   const handleUploadClick = () => {
@@ -116,13 +124,14 @@ export default function UploadPage() {
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      // Start loading state
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      setFileCount(files.length);
+      // Start loading state (fake processing)
       setIsLoading(true);
-      setTimeRemaining(4 * 60);
+      setTimeRemaining(totalTime);
       setProgress(0);
-      console.log("File selected:", file);
+      console.log(`${files.length} photo(s) selected`);
     }
   };
 
@@ -154,11 +163,18 @@ export default function UploadPage() {
           <div className="w-full max-w-2xl flex flex-col items-center animate-fade-in">
             {/* Loading Title */}
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-serif text-[var(--ink)] font-normal text-center mb-16">
-              Loading your{" "}
+              Generating{" "}
               <span className="text-[var(--accent)] border-b-2 border-[var(--accent)]">
                 {memoryName || "Room"}
               </span>
             </h1>
+
+            {/* File count badge */}
+            {fileCount > 0 && (
+              <p className="text-[var(--muted)] font-sohne text-sm mb-8 animate-fade-in">
+                Processing {fileCount} photo{fileCount !== 1 ? "s" : ""}
+              </p>
+            )}
 
             {/* Progress Ring */}
             <div className="relative w-36 h-36 md:w-44 md:h-44 mb-6 animate-scale-in">
@@ -175,9 +191,9 @@ export default function UploadPage() {
               </div>
             </div>
 
-            {/* Check back message */}
+            {/* Status message */}
             <p className="text-[var(--muted)] font-sohne text-base md:text-lg text-center mb-2 animate-fade-in-up">
-              Check back soon!
+              Building your 3D room model
             </p>
             <p className="text-[var(--muted)] font-sohne text-sm text-center animate-fade-in-up animation-delay-100">
               Do not close your browser.
@@ -277,12 +293,13 @@ export default function UploadPage() {
               <UploadIcon className="w-7 h-7 md:w-8 md:h-8 text-[var(--ink)]" />
             </button>
 
-            {/* Hidden File Input */}
+            {/* Hidden File Input – accepts images (multiple) */}
             <input
               ref={fileInputRef}
               type="file"
               onChange={handleFileChange}
-              accept=".glb,.gltf,.obj,.ply,.las,.laz"
+              accept="image/*,.heic,.heif"
+              multiple
               className="hidden"
             />
           </div>
@@ -291,15 +308,14 @@ export default function UploadPage() {
           <div className="w-full max-w-lg">
             <ol className="space-y-4 text-sm md:text-base text-[var(--ink)] font-sohne list-decimal pl-6">
               <li className="leading-relaxed">
-                Record a slow room walk-through (stay ~2 m from walls) or export
-                a LiDAR scan.
+                Take 50-100 photos of your room from different angles with good
+                lighting.
               </li>
               <li className="leading-relaxed">
-                Aim for 45-90 seconds, good lighting, and avoid fast turns.
+                Cover all walls, floors, and furniture. Overlap each shot by 60%.
               </li>
               <li className="leading-relaxed">
-                Upload the file we'll detect the format and open your room in the
-                viewer.
+                Upload the photos and we&apos;ll generate a 3D model of your room.
               </li>
             </ol>
           </div>

@@ -49,6 +49,10 @@ interface SmartSceneProps {
   onAddItem?: (item: PlacedItem) => void;
   onReady?: (addChair: () => Promise<void>) => void; // Callback to expose addChair function
   onItemClick?: (item: DatabaseItemData) => void; // Callback when an item is clicked (for showing detail modal)
+  // Demo mode: start empty, reveal items one-by-one on keypress
+  demoMode?: boolean;
+  demoBoardUrl?: string; // restrict demo queue to one Pinterest board
+  demoAdvanceKey?: string; // space | n | enter | arrowright
 }
 
 type RoomOverlayHintEventDetail = { text: string };
@@ -70,6 +74,9 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   onAddItem,
   onReady,
   onItemClick,
+  demoMode = false,
+  demoBoardUrl,
+  demoAdvanceKey = "space",
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<ThreeScene | null>(null);
@@ -110,6 +117,20 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   const isDbImportRunningRef = useRef(false);
   // Debounce saves for transform updates (keyed by placed item id)
   const saveTransformTimeoutsRef = useRef<Map<number, number>>(new Map());
+
+  // ── Demo mode refs ──
+  // Holds the ordered list of DB items to reveal one-by-one
+  const demoQueueRef = useRef<any[]>([]);
+  // Index of the next item to reveal (starts at 0)
+  const demoIndexRef = useRef<number>(0);
+  // GLTF cache for prefetched models (keyed by proxied URL)
+  const gltfCacheRef = useRef<Map<string, any>>(new Map());
+  // Whether demo queue has been loaded
+  const demoQueueLoadedRef = useRef(false);
+  // Whether a reveal is currently in-progress (prevent double-fire)
+  const demoRevealingRef = useRef(false);
+  // Saved transforms from saved-data collection, keyed by glbUrl (for demo mode restore)
+  const demoSavedTransformsRef = useRef<Map<string, { position: number[]; rotation: number[]; scale: number }>>(new Map());
 
   const getOriginalGlbUrlForPlacedItem = useCallback((placedItemId: number): string | null => {
     const meta = dbItemsMetaRef.current.get(placedItemId);
@@ -1117,10 +1138,14 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     const scene = sceneRef.current;
     const loader = new GLTFLoader();
 
-    return new Promise((resolve, reject) => {
-      loader.load(
-        item.modelPath,
-        (gltf) => {
+    // Helper: resolve GLTF from cache or network
+    const resolveGltf = (): Promise<any> => {
+      const cached = gltfCacheRef.current.get(item.modelPath);
+      if (cached) return Promise.resolve(cached);
+      return new Promise((res, rej) => loader.load(item.modelPath, res, undefined, rej));
+    };
+
+    return resolveGltf().then((gltf) => {
         if (!isMountedRef.current) return;
         // Guard against stale loader callbacks after room switches / teardown.
         if (sceneRef.current !== scene) return;
@@ -1649,55 +1674,52 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
           const duration = 1500;
           const startTime = Date.now();
           const finalScale = finalItemScale;
-          
-          const animateAppearance = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const eased = 1 - Math.pow(1 - progress, 3);
-            
-            // Animate scale
-            const currentScale = eased * finalScale;
-            model.scale.set(currentScale, currentScale, currentScale);
-            
-            // Animate opacity
-            const opacity = eased;
-            model.traverse((child) => {
-              if (child instanceof THREE.Mesh) {
-                if (Array.isArray(child.material)) {
-                  child.material.forEach((mat: THREE.Material) => {
-                    mat.opacity = opacity;
-                  });
-                } else if (child.material) {
-                  child.material.opacity = opacity;
-                }
-              }
-            });
 
-            // Fade in the contact shadow with the item (so it "appears with it").
-            const shadow = itemShadowRef.current.get(item.id);
-            if (shadow) {
-              const mat = shadow.material as THREE.MeshBasicMaterial;
-              const targetShadowOpacity = isPlant && hasTable ? 0.16 : 0.36;
-              mat.opacity = eased * targetShadowOpacity;
-              // Keep shadow size synced to animated model scale.
-              ensureItemContactShadow(item, model, { opacity: mat.opacity, scaleOverride: currentScale });
-            }
+          return new Promise<void>((animResolve) => {
+            const animateAppearance = () => {
+              const elapsed = Date.now() - startTime;
+              const progress = Math.min(elapsed / duration, 1);
+              const eased = 1 - Math.pow(1 - progress, 3);
+              
+              // Animate scale
+              const currentScale = eased * finalScale;
+              model.scale.set(currentScale, currentScale, currentScale);
+              
+              // Animate opacity
+              const opacity = eased;
+              model.traverse((child) => {
+                if (child instanceof THREE.Mesh) {
+                  if (Array.isArray(child.material)) {
+                    child.material.forEach((mat: THREE.Material) => {
+                      mat.opacity = opacity;
+                    });
+                  } else if (child.material) {
+                    child.material.opacity = opacity;
+                  }
+                }
+              });
+
+              // Fade in the contact shadow with the item (so it "appears with it").
+              const shadow = itemShadowRef.current.get(item.id);
+              if (shadow) {
+                const mat = shadow.material as THREE.MeshBasicMaterial;
+                const targetShadowOpacity = isPlant && hasTable ? 0.16 : 0.36;
+                mat.opacity = eased * targetShadowOpacity;
+                // Keep shadow size synced to animated model scale.
+                ensureItemContactShadow(item, model, { opacity: mat.opacity, scaleOverride: currentScale });
+              }
+              
+              if (progress < 1) {
+                requestAnimationFrame(animateAppearance);
+              } else {
+                animResolve();
+              }
+            };
             
-            if (progress < 1) {
-              requestAnimationFrame(animateAppearance);
-            } else {
-              resolve();
-            }
-          };
-          
-          animateAppearance();
-        },
-        undefined,
-        (error) => {
-          console.error(`Error loading item ${item.id}:`, error);
-          reject(error);
-        }
-      );
+            animateAppearance();
+          });
+    }).catch((error) => {
+      console.error(`Error loading item ${item.id}:`, error);
     });
   }, [roomDimensions, applyPbrLightingTuning, ensureItemContactShadow, getSurfaceYForItem]);
 
@@ -2508,8 +2530,10 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
   }, []);
 
   // Auto-load items when room is ready - check saved items first
+  // SKIP in demo mode: demo starts with an empty room.
   const hasAutoLoadedRef = useRef(false);
   useEffect(() => {
+    if (demoMode) return; // Demo mode starts empty
     if (!dbImportEnabled) return;
 
     // Only run once when room is ready (loading becomes false and room has dimensions)
@@ -2544,11 +2568,13 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
         }
       }, 1000);
     }
-  }, [dbImportEnabled, loading, roomDimensions, loadSavedItems, loadItemsFromDatabase]);
+  }, [demoMode, dbImportEnabled, loading, roomDimensions, loadSavedItems, loadItemsFromDatabase]);
 
   // Poll MongoDB for new "ready" items and auto-place them via Gemini.
   // This only places NEW items (deduped by Mongo _id via processedDbItemIdsRef).
+  // SKIP in demo mode: items are revealed manually via keypress.
   useEffect(() => {
+    if (demoMode) return; // Demo mode: no polling
     if (loading) return;
     if (!sceneRef.current) return;
     if (!(roomDimensions.width > 0)) return;
@@ -2562,7 +2588,204 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     }, POLL_MS);
 
     return () => window.clearInterval(interval);
-  }, [dbImportEnabled, loading, roomDimensions.width, loadItemsFromDatabase]);
+  }, [demoMode, dbImportEnabled, loading, roomDimensions.width, loadItemsFromDatabase]);
+
+  // ── Demo mode: load queue from MongoDB & prefetch GLBs ──
+  useEffect(() => {
+    if (!demoMode) return;
+    if (loading) return;
+    if (!(roomDimensions.width > 0)) return;
+    if (!sceneRef.current) return;
+    if (demoQueueLoadedRef.current) return;
+    demoQueueLoadedRef.current = true;
+
+    (async () => {
+      try {
+        const qs = demoBoardUrl ? `?boardUrl=${encodeURIComponent(demoBoardUrl)}` : "";
+        const [itemsRes, savedRes] = await Promise.all([
+          fetch(`/api/items${qs}`),
+          fetch("/api/saved-data"),
+        ]);
+        if (!itemsRes.ok) throw new Error(`Failed to fetch items: ${itemsRes.status}`);
+        const dbItems: any[] = await itemsRes.json();
+
+        // Build saved-transform lookup keyed by glbUrl
+        if (savedRes.ok) {
+          const savedData = await savedRes.json();
+          const savedItems: any[] = savedData.items || [];
+          for (const s of savedItems) {
+            if (s.glbUrl) {
+              demoSavedTransformsRef.current.set(s.glbUrl, {
+                position: s.position || [0, 0, 0],
+                rotation: s.rotation || [0, 0, 0],
+                scale: typeof s.scale === "number" ? s.scale : 1,
+              });
+            }
+          }
+          console.log(`🎬 Demo saved transforms loaded: ${demoSavedTransformsRef.current.size}`);
+        }
+
+        // Sort by createdAt ascending for a stable reveal order
+        dbItems.sort((a: any, b: any) => {
+          const ta = new Date(a.createdAt || 0).getTime();
+          const tb = new Date(b.createdAt || 0).getTime();
+          return ta - tb;
+        });
+
+        // Only keep items that have a GLB URL
+        const validItems = dbItems.filter((it: any) => it.asset?.glbUrl);
+        demoQueueRef.current = validItems;
+        demoIndexRef.current = 0;
+        console.log(`🎬 Demo queue loaded: ${validItems.length} items`);
+
+        // Prefetch all GLBs into cache
+        const loader = new GLTFLoader();
+        const getProxiedUrl = (url: string): string => {
+          if (url.startsWith("/")) return url;
+          return `/api/proxy-model?url=${encodeURIComponent(url)}`;
+        };
+
+        for (const item of validItems) {
+          const proxied = getProxiedUrl(item.asset.glbUrl);
+          if (gltfCacheRef.current.has(proxied)) continue;
+          try {
+            const gltf = await new Promise<any>((resolve, reject) => {
+              loader.load(proxied, resolve, undefined, reject);
+            });
+            gltfCacheRef.current.set(proxied, gltf);
+          } catch (e) {
+            console.warn(`⚠️ Failed to prefetch ${proxied}:`, e);
+          }
+        }
+        console.log(`🎬 Demo prefetch complete: ${gltfCacheRef.current.size} models cached`);
+      } catch (err) {
+        console.error("❌ Demo queue load error:", err);
+      }
+    })();
+  }, [demoMode, loading, roomDimensions, demoBoardUrl, demoAdvanceKey, setRoomOverlayHint]);
+
+  // ── Demo mode: reveal next item ──
+  const revealNextDemoItem = useCallback(() => {
+    if (!demoMode) return;
+    if (demoRevealingRef.current) return;
+    const queue = demoQueueRef.current;
+    const idx = demoIndexRef.current;
+    if (idx >= queue.length) {
+      console.log("🎬 Demo: all items revealed!");
+      return;
+    }
+
+    demoRevealingRef.current = true;
+    const dbItem = queue[idx];
+    demoIndexRef.current = idx + 1;
+
+    const getProxiedUrl = (url: string): string => {
+      if (url.startsWith("/")) return url;
+      return `/api/proxy-model?url=${encodeURIComponent(url)}`;
+    };
+
+    const glbUrl = dbItem.asset?.glbUrl;
+    if (!glbUrl) {
+      demoRevealingRef.current = false;
+      return;
+    }
+    const proxiedUrl = getProxiedUrl(glbUrl);
+
+    // Check if we have a previously saved transform for this item
+    const savedTransform = demoSavedTransformsRef.current.get(glbUrl);
+
+    let finalX: number, finalY: number, finalZ: number;
+    let finalRotation: [number, number, number] = [0, 0, 0];
+    let finalScale = 1;
+
+    if (savedTransform) {
+      // Restore previously saved position, rotation, and scale
+      finalX = savedTransform.position[0];
+      finalY = savedTransform.position[1];
+      finalZ = savedTransform.position[2];
+      finalRotation = [savedTransform.rotation[0], savedTransform.rotation[1], savedTransform.rotation[2]];
+      finalScale = savedTransform.scale;
+      console.log(`🎬 Demo: restoring saved transform for ${glbUrl}`);
+    } else {
+      // Deterministic placement: spread items in a line/arc within room bounds
+      const floorY = roomDimensions.floorY || -0.5315285924741149;
+      const scaledWidth = roomDimensions.scaledWidth || roomDimensions.width * (roomDimensions.scaleFactor || 1);
+      const scaledDepth = roomDimensions.scaledDepth || roomDimensions.depth * (roomDimensions.scaleFactor || 1);
+      const totalItems = queue.length;
+      const cols = Math.ceil(Math.sqrt(totalItems));
+      const row = Math.floor(idx / cols);
+      const col = idx % cols;
+      // Map grid cell (0..cols-1) to -0.35..0.35 of scaled dimensions
+      const xNorm = cols > 1 ? (col / (cols - 1)) * 0.7 - 0.35 : 0;
+      const zNorm = cols > 1 ? (row / (Math.ceil(totalItems / cols) - 1 || 1)) * 0.7 - 0.35 : 0;
+      finalX = xNorm * scaledWidth;
+      finalZ = zNorm * scaledDepth;
+      finalY = floorY + 0.3; // placeholder – loadAndRenderItem corrects
+    }
+
+    const label = dbItem.analysis?.label || dbItem.analysis?.main_item || "Furniture";
+    const itemId = Date.now() + idx;
+
+    const newItem: PlacedItem = {
+      id: itemId,
+      modelPath: proxiedUrl,
+      position: [finalX, finalY, finalZ],
+      rotation: finalRotation,
+      scale: finalScale,
+      dbItemId: dbItem._id,
+    };
+
+    // Store metadata for click-to-modal
+    dbItemsMetaRef.current.set(itemId, {
+      _id: dbItem._id,
+      source: dbItem.source,
+      analysis: dbItem.analysis,
+      asset: dbItem.asset,
+    });
+
+    console.log(`🎬 Demo reveal #${idx + 1}/${queue.length}: ${label}`);
+
+    setItems((prev) => {
+      if (prev.some((i) => i.id === newItem.id)) return prev;
+      return [...prev, newItem];
+    });
+
+    // Allow next reveal after a short delay (lets the animation start)
+    setTimeout(() => {
+      demoRevealingRef.current = false;
+    }, 400);
+  }, [demoMode, roomDimensions]);
+
+  // ── Demo mode: keypress listener ──
+  useEffect(() => {
+    if (!demoMode) return;
+    if (loading) return;
+    if (!(roomDimensions.width > 0)) return;
+
+    // Map advance key name to KeyboardEvent codes
+    const keyMap: Record<string, string[]> = {
+      space: ["Space"],
+      n: ["KeyN"],
+      enter: ["Enter"],
+      arrowright: ["ArrowRight"],
+    };
+    const validCodes = keyMap[demoAdvanceKey] || keyMap.space;
+
+    const handler = (e: KeyboardEvent) => {
+      // Don't trigger while typing in inputs
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      if (validCodes.includes(e.code)) {
+        e.preventDefault();
+        e.stopPropagation();
+        revealNextDemoItem();
+      }
+    };
+
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [demoMode, loading, roomDimensions, demoAdvanceKey, revealNextDemoItem]);
 
   // Expose addChair when ready (after room loads)
   useEffect(() => {
@@ -2571,8 +2794,9 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
     }
   }, [loading, roomDimensions, onReady, addChair]);
 
-  // Listen for spacebar to call addChair()
+  // Listen for spacebar to call addChair() (non-demo mode only)
   useEffect(() => {
+    if (demoMode) return; // Demo mode has its own keypress handler
     console.log("🎹 Setting up keyboard listener for spacebar...");
     
     const handleKeyPress = (e: KeyboardEvent) => {
@@ -2621,7 +2845,7 @@ export const SmartScene: React.FC<SmartSceneProps> = ({
       document.removeEventListener("keydown", handleKeyPress);
       console.log("🧹 Keyboard listener removed");
     };
-  }, [loading, roomDimensions, addChair]);
+  }, [demoMode, loading, roomDimensions, addChair]);
 
   return (
     <div className={cn("w-full h-full relative", className)}>

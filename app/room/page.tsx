@@ -9,9 +9,15 @@ import ItemDetailModal, { type DatabaseItem } from "@/components/overlay/ItemDet
 function RoomContent() {
   const searchParams = useSearchParams();
   const modelFromUrl = searchParams?.get("model") ?? null;
+
+  // Demo mode query params
+  const demoParam = searchParams?.get("demo") ?? null;
+  const demoBoardUrl = searchParams?.get("boardUrl") ?? undefined;
+  const demoAdvanceKey = searchParams?.get("key") ?? "space"; // space | n | enter | arrowright
+  const demoMode = demoParam === "1" || demoParam === "true";
   
   const [roomModelPath, setRoomModelPath] = useState(
-    modelFromUrl || "/davidsbedroom.glb"
+    modelFromUrl || (demoMode ? "/davidsbedroom.glb" : "/davidsbedroom.glb")
   );
   
   // Modal state for item detail popup
@@ -52,6 +58,9 @@ function RoomContent() {
           className="w-full h-full" 
           roomModelPath={roomModelPath}
           onItemClick={handleItemClick}
+          demoMode={demoMode}
+          demoBoardUrl={demoBoardUrl}
+          demoAdvanceKey={demoAdvanceKey}
         />
       </div>
 

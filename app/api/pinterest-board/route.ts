@@ -34,7 +34,7 @@ async function pollJobStatus(jobId: string, endpoint: string, maxWaitTime = 3000
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { boardUrl } = body;
+    const { boardUrl, maxPins } = body;
 
     if (!boardUrl) {
       return NextResponse.json(
@@ -43,7 +43,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("📌 Starting Pinterest board processing:", boardUrl);
+    // Allow caller to override the default max_pins (useful for pre-processing all pins before a demo)
+    const effectiveMaxPins = typeof maxPins === "number" && maxPins > 0 ? maxPins : 10;
+
+    console.log("📌 Starting Pinterest board processing:", boardUrl, `(max_pins: ${effectiveMaxPins})`);
     console.log("🔗 Pinterest service URL:", PINTEREST_SERVICE_URL);
 
     // Step 1: Start analyze job
@@ -56,7 +59,7 @@ export async function POST(request: NextRequest) {
         },
         body: JSON.stringify({
           board_url: boardUrl,
-          max_pins: 10,
+          max_pins: effectiveMaxPins,
         }),
       });
     } catch (fetchError) {

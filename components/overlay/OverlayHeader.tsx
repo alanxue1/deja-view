@@ -163,25 +163,7 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
             {/* Center: Déjà View */}
             {/* Avoid transform-based centering (can cause subpixel/ghosted text rendering) */}
             <div className="absolute inset-x-0 pointer-events-auto flex flex-col items-center">
-              <h1 className="text-2xl font-semibold text-white font-serif mb-3">Déjà View</h1>
-              {/* Pinterest Board Input */}
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder={isLoadingPinterest ? "Processing..." : "Paste Pinterest board URL..."}
-                  disabled={isLoadingPinterest}
-                  className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg px-4 py-2 text-white text-sm placeholder:text-white/60 focus:outline-none focus:ring-0 focus:border-white/30 w-72 disabled:opacity-50 text-center"
-                  style={{ boxShadow: 'none' }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !isLoadingPinterest) {
-                      const url = (e.target as HTMLInputElement).value;
-                      if (url) {
-                        handlePinterestBoard(url);
-                      }
-                    }
-                  }}
-                />
-              </div>
+              <h1 className="text-2xl font-semibold text-white font-serif">Déjà View</h1>
             </div>
 
             {/* Right: User Icon or Profile Image */}
@@ -321,35 +303,18 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
           <div className="absolute inset-x-0 pointer-events-auto flex flex-col items-center">
             <button
               onClick={handleHomeClick}
-              className="text-2xl font-semibold text-[var(--ink)] font-serif hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-0 p-0 mb-3"
+              className="text-2xl font-semibold text-[var(--ink)] font-serif hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-0 p-0"
               data-cursor="hover"
             >
               Déjà View
             </button>
-            {/* Pinterest Board Input */}
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                placeholder={isLoadingPinterest ? "Processing..." : "Paste Pinterest board URL..."}
-                disabled={isLoadingPinterest}
-                className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg px-4 py-2 text-[var(--ink)] text-sm placeholder:text-[var(--ink)]/60 focus:outline-none focus:ring-0 focus:border-white/30 w-72 disabled:opacity-50 text-center"
-                style={{ boxShadow: 'none' }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !isLoadingPinterest) {
-                    const url = (e.target as HTMLInputElement).value;
-                    if (url) {
-                      handlePinterestBoard(url);
-                    }
-                  }
-                }}
-              />
-            </div>
           </div>
           <div className="pointer-events-auto">
             <SignedIn>
               <div
                 ref={profileWrapRef}
                 className="relative w-12 h-12 flex items-center justify-center"
+                style={{ width: "48px", height: "48px" }}
               >
                 <button
                   type="button"
@@ -357,6 +322,9 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
                   onClick={() => setProfileOpen((v) => !v)}
                   className="w-12 h-12 hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-0 rounded-full flex items-center justify-center"
                   data-cursor="hover"
+                  aria-label="User menu"
+                  aria-haspopup="menu"
+                  aria-expanded={isProfileOpen}
                 >
                   {user?.imageUrl ? (
                     <img
@@ -368,6 +336,67 @@ export const OverlayHeader: React.FC<OverlayHeaderProps> = ({ overlay = true, sh
                     <User size={32} className="text-[var(--ink)]" />
                   )}
                 </button>
+
+                <AnimatePresence>
+                  {isProfileOpen && (
+                    <motion.div
+                      role="menu"
+                      initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      transition={{ duration: 0.16, ease: "easeOut" }}
+                      ref={menuRef}
+                      className="glass-popover fixed min-w-[240px] max-w-[calc(100vw-24px)] z-[120] p-3 text-[var(--ink)]"
+                      style={{
+                        top: menuPos?.top ?? 0,
+                        left: menuPos?.left ?? 0,
+                        transformOrigin: menuPos?.origin ?? "top right",
+                        willChange: "transform, opacity",
+                      }}
+                    >
+                      <div className="px-2 pb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-[var(--ink)]/10 border border-[var(--ink)]/20 flex items-center justify-center overflow-hidden">
+                            {user?.imageUrl ? (
+                              <img
+                                src={user.imageUrl}
+                                alt={user.firstName || "User"}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <User size={18} className="text-[var(--ink)]/90" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-base font-semibold leading-tight truncate">
+                              {user?.fullName || user?.firstName || "Account"}
+                            </div>
+                            {user?.primaryEmailAddress?.emailAddress && (
+                              <div className="text-xs text-[var(--ink)]/75 mt-1 truncate">
+                                {user.primaryEmailAddress.emailAddress}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="h-px bg-[var(--ink)]/10 my-2" />
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={async () => {
+                          setProfileOpen(false);
+                          await clerk.signOut({ redirectUrl: "/" });
+                        }}
+                        className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-[var(--ink)]/10 transition-colors text-sm"
+                        data-cursor="hover"
+                      >
+                        Log out
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </SignedIn>
             <SignedOut>

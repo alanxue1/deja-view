@@ -93,7 +93,7 @@ export default function LoadingPage() {
 
       if (p >= 1) {
         clearInterval(interval);
-        router.replace("/room");
+        router.replace("/upload");
       }
     }, 50);
 
